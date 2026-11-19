@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="pt">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220%22><text y=%2222%22 font-size=%2222%22>🏎️</text></svg>" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MiniRace 3D</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+        user-select: none;
+      }
+      body, html, #root {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background-color: #1a1a1a;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  
+    <script>
+      window.addEventListener('error', function(e) {
+        var box = document.getElementById('debug-error-box');
+        if (!box) {
+          box = document.createElement('div');
+          box.id = 'debug-error-box';
+          box.style.cssText = 'position:fixed;top:12px;left:12px;right:12px;background:#ef4444;color:#fff;padding:16px 20px;border-radius:10px;z-index:999999;font-family:monospace;font-size:13px;white-space:pre-wrap;box-shadow:0 10px 40px rgba(0,0,0,0.8);line-height:1.5;';
+          document.body.appendChild(box);
+        }
+        box.innerHTML = '<strong>⚠️ ERRO JAVASCRIPT:</strong>\n' + (e.error ? (e.error.stack || e.error.message) : (e.message || String(e))) + '\n\nFicheiro: ' + e.filename + ':' + e.lineno + '\n\n<button onclick="localStorage.clear();location.reload();" style="background:#fff;color:#ef4444;border:none;border-radius:6px;padding:6px 12px;font-weight:800;cursor:pointer;margin-top:8px;">Limpar Cache e Recarregar</button>';
+      });
+    </script>
+  </body>
+</html>
