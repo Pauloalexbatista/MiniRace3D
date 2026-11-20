@@ -246,15 +246,28 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
       if (p.z < minZ) minZ = p.z;
       if (p.z > maxZ) maxZ = p.z;
     });
+    branches.forEach(b => {
+      b.points.forEach(bp => {
+        const z = bp.z ?? 0;
+        if (z < minZ) minZ = z;
+        if (z > maxZ) maxZ = z;
+      });
+    });
     const len = currentSpline[currentSpline.length - 1]?.distFromStart || 0;
     return {
       length: Math.round(len),
       minZ: Math.round(minZ * 10) / 10,
       maxZ: Math.round(maxZ * 10) / 10
     };
-  }, [currentSpline]);
+  }, [currentSpline, branches]);
 
-  const selectedPoint = selectedPointIndex !== null ? controlPoints[selectedPointIndex] : null;
+  const selectedPoint = useMemo(() => {
+    if (selectedBranchNode !== null) {
+      const br = branches.find(b => b.id === selectedBranchNode.branchId);
+      return br?.points[selectedBranchNode.nodeIndex] ?? null;
+    }
+    return selectedPointIndex !== null ? (controlPoints[selectedPointIndex] ?? null) : null;
+  }, [selectedBranchNode, branches, selectedPointIndex, controlPoints]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -272,7 +285,7 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
       const active = document.activeElement;
       const isInput = active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA');
 
-      if ((e.code === 'Delete' || e.code === 'Backspace') && selectedPointIndex !== null && !isInput) {
+      if ((e.code === 'Delete' || e.code === 'Backspace') && (selectedPointIndex !== null || selectedBranchNode !== null) && !isInput) {
         handleDeleteSelectedPoint();
       }
 
@@ -294,15 +307,24 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedPointIndex, controlPoints.length]);
+  }, [selectedPointIndex, selectedBranchNode, controlPoints.length]);
 
   const handleUpdateSelectedShoulderWidth = (newShoulder: number) => {
+    const roundedSW = Math.round(newShoulder * 10) / 10;
+    if (selectedBranchNode !== null) {
+      setBranches(prev => prev.map(b =>
+        b.id === selectedBranchNode.branchId
+          ? { ...b, points: b.points.map((bp, i) => i === selectedBranchNode.nodeIndex ? { ...bp, shoulderWidth: roundedSW } : bp) }
+          : b
+      ));
+      return;
+    }
     if (selectedPointIndex === null) return;
     setControlPoints(prev => {
       const next = [...prev];
       next[selectedPointIndex] = {
         ...next[selectedPointIndex],
-        shoulderWidth: Math.round(newShoulder * 10) / 10
+        shoulderWidth: roundedSW
       };
       return next;
     });
@@ -581,6 +603,40 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
   };
 
   const handleInsertPointAfter = () => {
+    if (selectedBranchNode !== null) {
+      const branch = branches.find(b => b.id === selectedBranchNode.branchId);
+      if (!branch || branch.points.length === 0) return;
+      const bIdx = selectedBranchNode.nodeIndex;
+      if (bIdx >= branch.points.length - 1) return;
+      pushHistory();
+      const pCurr = branch.points[bIdx];
+      const pNext = branch.points[bIdx + 1];
+      const newPoint: SplineNode = {
+        x: (pCurr.x + pNext.x) / 2,
+        y: (pCurr.y + pNext.y) / 2,
+        z: ((pCurr.z ?? 0) + (pNext.z ?? 0)) / 2,
+        width: ((pCurr.width || 18) + (pNext.width || 18)) / 2,
+        banking: ((pCurr.banking || 0) + (pNext.banking || 0)) / 2,
+        isTunnel: Boolean(pCurr.isTunnel && pNext.isTunnel),
+        whiteLineWidth: ((pCurr.whiteLineWidth ?? 0.4) + (pNext.whiteLineWidth ?? 0.4)) / 2,
+        curbYellowWidth: ((pCurr.curbYellowWidth ?? 0.6) + (pNext.curbYellowWidth ?? 0.6)) / 2,
+        curbRedWidth: ((pCurr.curbRedWidth ?? 0.6) + (pNext.curbRedWidth ?? 0.6)) / 2,
+        grassWidth: ((pCurr.grassWidth ?? 2.0) + (pNext.grassWidth ?? 2.0)) / 2,
+        sandWidth: ((pCurr.sandWidth ?? 1.5) + (pNext.sandWidth ?? 1.5)) / 2,
+        gravelWidth: ((pCurr.gravelWidth ?? 2.0) + (pNext.gravelWidth ?? 2.0)) / 2,
+        wallThickness: ((pCurr.wallThickness ?? 0.8) + (pNext.wallThickness ?? 0.8)) / 2,
+        shoulderWidth: ((pCurr.shoulderWidth ?? 7.1) + (pNext.shoulderWidth ?? 7.1)) / 2
+      };
+      setBranches(prev => prev.map(b => {
+        if (b.id !== selectedBranchNode.branchId) return b;
+        const updated = [...b.points];
+        updated.splice(bIdx + 1, 0, newPoint);
+        return { ...b, points: updated.map((pt, i) => ({ ...pt, nodeIndex: i })) };
+      }));
+      setSelectedBranchNode({ branchId: selectedBranchNode.branchId, nodeIndex: bIdx + 1 });
+      return;
+    }
+
     if (selectedPointIndex === null || controlPoints.length === 0) return;
     setElevationType('custom');
     const idx = selectedPointIndex;
@@ -594,6 +650,7 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
       z: ((pCurr.z ?? 0) + (pNext.z ?? 0)) / 2,
       width: ((pCurr.width || 18) + (pNext.width || 18)) / 2,
       banking: ((pCurr.banking || 0) + (pNext.banking || 0)) / 2,
+      isTunnel: Boolean(pCurr.isTunnel && pNext.isTunnel),
       whiteLineWidth: ((pCurr.whiteLineWidth ?? 0.4) + (pNext.whiteLineWidth ?? 0.4)) / 2,
       curbYellowWidth: ((pCurr.curbYellowWidth ?? 0.6) + (pNext.curbYellowWidth ?? 0.6)) / 2,
       curbRedWidth: ((pCurr.curbRedWidth ?? 0.6) + (pNext.curbRedWidth ?? 0.6)) / 2,
@@ -1207,13 +1264,14 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
           offsetX={mapOffsetX}
           offsetZ={mapOffsetZ}
           rotationAngle={mapRotation}
+          groundY={groundY}
           onClick={handleAddPointAt}
         />
 
         {/* Ground click receiver to place points or spray scenery */}
         <mesh
           rotation={[-Math.PI / 2, 0, 0]}
-          position={[0, studioTab === 'scenery' ? groundY + 0.1 : -0.4, 0]}
+          position={[0, studioTab === 'scenery' ? groundY + 0.1 : groundY - 0.05, 0]}
           onPointerDown={(e) => {
             pointerDownPosRef.current = { x: e.clientX, y: e.clientY };
             if (studioTab === 'scenery' && activeSpray && e.button === 0) {
@@ -1248,11 +1306,10 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
           onClick={(e) => {
             e.stopPropagation();
             if (studioTab === 'scenery') return; // Pista 100% protegida no modo Relevo!
-            if (pointerDownPosRef.current) {
-              const dist = Math.hypot(e.clientX - pointerDownPosRef.current.x, e.clientY - pointerDownPosRef.current.y);
-              pointerDownPosRef.current = null;
-              if (dist > 5) return; // Movimento do rato para rodar o mapa: NÃO cria estrada!
-            }
+            if (!pointerDownPosRef.current) return;
+            const dist = Math.hypot(e.clientX - pointerDownPosRef.current.x, e.clientY - pointerDownPosRef.current.y);
+            pointerDownPosRef.current = null;
+            if (dist > 5) return; // Movimento do rato para rodar o mapa: NÃO cria estrada!
             handleAddPointAt(e.point.x, e.point.z);
           }}
         >
@@ -2069,6 +2126,7 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
         controlPoints={controlPoints}
         selectedPointIndex={selectedPointIndex}
         onSelectPointIndex={(idx) => {
+          setSelectedBranchNode(null);
           setSelectedPointIndex(idx);
           const pt = controlPoints[idx];
           if (pt && controlsRef.current) {
@@ -2080,6 +2138,25 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
             ctrl.update();
           }
         }}
+        branches={branches}
+        selectedBranchNode={selectedBranchNode}
+        onSelectBranchNode={(sel) => {
+          setSelectedBranchNode(sel);
+          setSelectedPointIndex(null);
+          if (sel && controlsRef.current) {
+            const br = branches.find(b => b.id === sel.branchId);
+            const pt = br?.points[sel.nodeIndex];
+            if (pt) {
+              setCameraMode('orbit');
+              setAutoRotate(false);
+              const ctrl = controlsRef.current;
+              ctrl.target.set(pt.x, (pt.z || 0) + 2, pt.y);
+              ctrl.object.position.set(pt.x - 35, (pt.z || 0) + 25, pt.y - 45);
+              ctrl.update();
+            }
+          }
+        }}
+        onClearSelection={handleClearSelection}
         isClosed={isClosed}
         onToggleClosed={() => setIsClosed(!isClosed)}
         onUndoPoint={handleUndoLastPoint}

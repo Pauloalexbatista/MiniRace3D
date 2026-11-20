@@ -19,6 +19,7 @@ export interface SplineNode {
   isTight?: boolean;
   isExtendedTight?: boolean;
   isApexTight?: boolean;
+  isTunnel?: boolean;
   maxWallRadius?: number;
   shoulderWidth?: number;
   whiteLineWidth?: number;
@@ -208,6 +209,12 @@ export function computeSpline(
       const b2 = p2.banking ?? 0;
       const banking = b1 + (b2 - b1) * t;
 
+      const isTunnel = Boolean(
+        (p1.isTunnel && p2.isTunnel) ||
+        (p1.isTunnel && t <= 0.5) ||
+        (p2.isTunnel && t >= 0.5)
+      );
+
       if (spline.length > 0) {
         const last = spline[spline.length - 1];
         const segDist = Math.hypot(x - last.x, y - last.y, z - last.z);
@@ -228,6 +235,7 @@ export function computeSpline(
         gravelWidth,
         wallThickness,
         banking,
+        isTunnel,
         ...interpZones(p1, p2, t),
         nodeIndex: i,
         distFromStart: runningDist
@@ -255,6 +263,7 @@ export function computeSpline(
         gravelWidth: lastNode.gravelWidth ?? 2.0,
         wallThickness: lastNode.wallThickness ?? 0.8,
         banking: lastNode.banking ?? 0,
+        isTunnel: Boolean(lastNode.isTunnel),
         ...interpZones(lastNode, lastNode, 0),
         nodeIndex: len - 1,
         distFromStart: runningDist

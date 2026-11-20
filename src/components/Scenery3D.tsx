@@ -102,6 +102,7 @@ export interface RoadSegmentGuard {
   bz: number;
   by: number;
   outerRadius: number;
+  isTunnel?: boolean;
 }
 
 interface TerrainMeshGrid {
@@ -165,6 +166,7 @@ export function buildRoadGuards(
         bz: b.y,
         by: b.z ?? 0,
         outerRadius: Math.max(nodeOuterRadius(a), nodeOuterRadius(b)),
+        isTunnel: Boolean(a.isTunnel || b.isTunnel),
       });
     }
   };
@@ -225,7 +227,7 @@ export function computeSceneryData(
     }
   }
 
-  const queryRoadClearance = (px: number, pz: number, needNearestAngle = false) => {
+  const queryRoadClearance = (px: number, pz: number, needNearestAngle = false, sampleRawY?: number) => {
     let minMargin = 999;
     let nearestRoadY = groundY;
     let nearestAngle = 0;
@@ -234,6 +236,7 @@ export function computeSceneryData(
     let nearestTanX = 1;
     let nearestTanZ = 0;
     let nearestOuterRadius = 18;
+    let nearestIsTunnel = false;
     let maxAllowedMountainY = Infinity;
 
     const evalGuard = (g: RoadSegmentGuard) => {
@@ -257,9 +260,13 @@ export function computeSceneryData(
         nearestTanX = dx / segLen;
         nearestTanZ = dz / segLen;
         nearestOuterRadius = g.outerRadius;
+        nearestIsTunnel = Boolean(g.isTunnel);
       }
 
       if (margin < 24.5) {
+        if (g.isTunnel && sampleRawY !== undefined && sampleRawY >= segY + 10.5) {
+          return;
+        }
         const blend = Math.max(0, Math.min(1, (margin - 4.5) / 20.0));
         const smooth = blend * blend * (3 - 2 * blend);
         const capUnderRoad = segY > groundY + 2.2 ? segY - 1.2 : groundY - 0.5;
@@ -290,6 +297,7 @@ export function computeSceneryData(
       nearestTanX,
       nearestTanZ,
       nearestOuterRadius,
+      nearestIsTunnel,
       maxAllowedMountainY,
     };
   };
@@ -352,7 +360,7 @@ export function computeSceneryData(
         const vx = p.x + Math.cos(ang) * rad;
         const vz = p.z + Math.sin(ang) * rad;
         const rawY = evalRawMountainY(p, frac, ang, groundY);
-        const { maxAllowedMountainY } = queryRoadClearance(vx, vz);
+        const { maxAllowedMountainY } = queryRoadClearance(vx, vz, false, rawY);
         const vy = Math.min(rawY, maxAllowedMountainY);
 
         verts.push(vx, vy, vz);
@@ -393,9 +401,15 @@ export function computeSceneryData(
         [(x2 + x0) * 0.5, (y2 + y0) * 0.5, (z2 + z0) * 0.5],
       ];
       for (const [sx, sy, sz] of samples) {
-        const { minMargin, nearestRoadY, maxAllowedMountainY } = queryRoadClearance(sx, sz);
-        if (minMargin < 1.0 && nearestRoadY <= groundY + 2.2) {
-          return true;
+        const { minMargin, nearestRoadY, nearestIsTunnel, maxAllowedMountainY } = queryRoadClearance(sx, sz, false, sy);
+        if (minMargin < 1.0) {
+          if (nearestIsTunnel) {
+            if (sy > nearestRoadY - 0.8 && sy < nearestRoadY + 10.2) {
+              return true;
+            }
+          } else if (nearestRoadY <= groundY + 2.2) {
+            return true;
+          }
         }
         if (minMargin < 0 && sy > maxAllowedMountainY + 0.1) {
           return true;
@@ -497,11 +511,11 @@ export function computeSceneryData(
         const occKey = (Math.floor(tx / 4.5) + 100000) * 200001 + (Math.floor(tz / 4.5) + 100000);
         if (treeOccupied.has(occKey)) continue;
 
-        const { minMargin } = queryRoadClearance(tx, tz);
-        if (minMargin < 5.0) continue; // Strictly outside track walls!
+        const { minMargin, nearestRoadY, nearestIsTunnel } = queryRoadClearance(tx, tz);
+        const { y: ty, onMountain } = getTerrainSurfaceAt(tx, tz);
+        if (minMargin < 5.0 && !(nearestIsTunnel && onMountain && ty >= nearestRoadY + 10.5)) continue; // Strictly outside track walls (except mountain roofs above tunnels)!
 
         treeOccupied.add(occKey);
-        const { y: ty, onMountain } = getTerrainSurfaceAt(tx, tz);
         const scale = (0.75 + rand() * 0.75) * Math.min(1.6, 0.7 + intensity * 0.35);
         const isPine = rand() > 0.3;
         const color = treeColors[Math.floor(rand() * treeColors.length)];

@@ -189,7 +189,7 @@ export function computeBridgePillars(
     const fA2 = frames[iNext];
 
     // Só segmentos elevados podem ser viadutos
-    if (fA1.pos.y < 1.2 && fA2.pos.y < 1.2) continue;
+    if (fA1.pos.y < groundY + 1.55 && fA2.pos.y < groundY + 1.55) continue;
 
     for (const seg of allLowerSegments) {
       if (seg.roadKey === 'main') {
@@ -247,7 +247,7 @@ export function computeBridgePillars(
   // mesmo quando os eixos centrais não se cruzam diretamente — sem nunca invadir curvas vizinhas!
   for (let i = 0; i < N; i++) {
     const fi = frames[i];
-    if (fi.pos.y < 2.5) continue;
+    if (fi.pos.y < groundY + 2.85) continue;
     const hwi = fi.width * 0.5;
     for (let j = 0; j < numMainSegments; j++) {
       const ringDiff = isClosed
@@ -477,8 +477,8 @@ export function computeBridgePillars(
     if (i > 0) {
       elevDistAcc += f.pos.distanceTo(frames[i - 1].pos);
     }
-    // Só coloca pilares quando a estrada está realmente elevada acima do nível base (z > 1.8m)
-    if (f.pos.y <= 1.8) {
+    // Só coloca pilares quando a estrada está realmente elevada acima do nível base
+    if (f.pos.y <= groundY + 2.15) {
       elevDistAcc = 26;
       continue;
     }

@@ -1,4 +1,4 @@
-﻿import React, { useMemo, useEffect } from 'react';
+﻿import React, { useMemo, useEffect, useRef } from 'react';
 import * as THREE from 'three';
 
 interface ReferenceMapOverlayProps {
@@ -9,6 +9,7 @@ interface ReferenceMapOverlayProps {
   offsetX: number;
   offsetZ: number;
   rotationAngle?: number;
+  groundY?: number;
   onClick?: (x: number, z: number) => void;
 }
 
@@ -20,8 +21,10 @@ export const ReferenceMapOverlay: React.FC<ReferenceMapOverlayProps> = React.mem
   offsetX,
   offsetZ,
   rotationAngle = 0,
+  groundY = -0.35,
   onClick
 }) => {
+  const pointerDownRef = useRef<{ x: number; y: number } | null>(null);
   const texture = useMemo(() => {
     if (!imageUrl) return null;
     const loader = new THREE.TextureLoader();
@@ -40,11 +43,18 @@ export const ReferenceMapOverlay: React.FC<ReferenceMapOverlayProps> = React.mem
   if (!visible || !texture) return null;
 
   return (
-    <group position={[offsetX, -0.35, offsetZ]} rotation={[0, (rotationAngle * Math.PI) / 180, 0]}>
+    <group position={[offsetX, groundY, offsetZ]} rotation={[0, (rotationAngle * Math.PI) / 180, 0]}>
       <mesh
         rotation={[-Math.PI / 2, 0, 0]}
+        onPointerDown={(e) => {
+          pointerDownRef.current = { x: e.clientX, y: e.clientY };
+        }}
         onClick={(e) => {
           e.stopPropagation();
+          if (!pointerDownRef.current) return;
+          const dist = Math.hypot(e.clientX - pointerDownRef.current.x, e.clientY - pointerDownRef.current.y);
+          pointerDownRef.current = null;
+          if (dist > 5) return;
           if (onClick) onClick(e.point.x, e.point.z);
         }}
       >

@@ -205,6 +205,8 @@ export function useCircuitStorage({
     const data = JSON.stringify({
       name: trackName,
       controlPoints,
+      branches,
+      sceneryPatches,
       customPitNodes,
       isClosed,
       mapImageUrl,
@@ -237,6 +239,8 @@ export function useCircuitStorage({
             id: 'imported_' + Date.now(),
             name: data.name || file.name.replace(/\.json$/i, ''),
             controlPoints: data.controlPoints,
+            branches: Array.isArray(data.branches) ? data.branches : [],
+            sceneryPatches: Array.isArray(data.sceneryPatches) ? data.sceneryPatches : [],
             customPitNodes: data.customPitNodes || null,
             isClosed: data.isClosed ?? true,
             mapImageUrl: data.mapImageUrl || null,

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { SplineNode, SavedCircuit, SprayCanType } from '../tracks';
+import { SplineNode, SavedCircuit, SprayCanType, RoadBranch } from '../tracks';
 import { getZone, ZONE_KEYS, ZONE_DEFAULTS, ZoneKey } from '../trackCorridor';
 import { CarClass } from './Car3D';
 import { CAR_CLASS_DEFAULTS, CarTuning } from './RapierCarController';
@@ -56,7 +56,9 @@ export interface StudioSidebarProps {
   isLinkingRoad?: boolean;
   onToggleLinkRoad?: () => void;
   onClearSelection?: () => void;
+  branches?: RoadBranch[];
   selectedBranchNode?: { branchId: string; nodeIndex: number } | null;
+  onSelectBranchNode?: (sel: { branchId: string; nodeIndex: number } | null) => void;
   isDrawingPit: boolean;
   onStartDrawPit: () => void;
   onFinishDrawPit: () => void;
@@ -919,7 +921,7 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
                 <button
                   onClick={() => {
                     if (props.selectedPointIndex === null) props.onSelectPointIndex(activeIdx);
-                    setActiveTab('track3d');
+                    setActiveTab('modeling3d');
                   }}
                   style={{
                     width: '100%',
@@ -1104,6 +1106,42 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
           const activePt = isEditingBranch
             ? activeBranchPt
             : (activeIdx !== null && props.controlPoints[activeIdx] ? props.controlPoints[activeIdx] : null);
+          const activeKey = isEditingBranch && props.selectedBranchNode
+            ? `b_${props.selectedBranchNode.branchId}_${props.selectedBranchNode.nodeIndex}`
+            : `m_${activeIdx ?? 'none'}`;
+
+          type NavItem =
+            | { kind: 'main'; index: number; seqNum: number }
+            | { kind: 'branch'; branchId: string; nodeIndex: number; seqNum: number };
+          const navItems: NavItem[] = [];
+          for (let i = 0; i < props.controlPoints.length; i++) {
+            navItems.push({ kind: 'main', index: i, seqNum: i + 1 });
+          }
+          let nextSeqNum = props.controlPoints.length + 1;
+          for (const br of (props.branches || [])) {
+            br.points.forEach((bp, bpIdx) => {
+              const sameAsMain = props.controlPoints.some(cp => Math.hypot(cp.x - bp.x, cp.y - bp.y) < 1.0);
+              if (!sameAsMain) {
+                navItems.push({ kind: 'branch', branchId: br.id, nodeIndex: bpIdx, seqNum: nextSeqNum++ });
+              }
+            });
+          }
+          const currentNavIdx = isEditingBranch && props.selectedBranchNode
+            ? navItems.findIndex(
+                it => it.kind === 'branch' && it.branchId === props.selectedBranchNode!.branchId && it.nodeIndex === props.selectedBranchNode!.nodeIndex
+              )
+            : (activeIdx !== null ? navItems.findIndex(it => it.kind === 'main' && it.index === activeIdx) : -1);
+          const currentNavItem = currentNavIdx >= 0 ? navItems[currentNavIdx] : null;
+          const activeSeqNum = currentNavItem ? currentNavItem.seqNum : (activeIdx !== null ? activeIdx + 1 : null);
+          const selectNavItem = (item: NavItem) => {
+            if (item.kind === 'main') {
+              props.onSelectBranchNode?.(null);
+              props.onSelectPointIndex(item.index);
+            } else {
+              props.onSelectBranchNode?.({ branchId: item.branchId, nodeIndex: item.nodeIndex });
+            }
+          };
+
           const asphaltW = activePt?.width ?? 18.0;
           const zoneOf = (key: ZoneKey, side: 'L' | 'R') => activePt ? getZone(activePt, key, side) : ZONE_DEFAULTS[key];
           const whiteLineWL = zoneOf('whiteLineWidth', 'L');
@@ -1133,16 +1171,43 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
             }
           };
           const nPts = props.controlPoints.length;
-          const gradeTo = (j: number) => {
-            if (!activePt || nPts < 2) return null;
-            const q = props.controlPoints[(j + nPts) % nPts];
-            const d = Math.hypot(q.x - activePt.x, q.y - activePt.y);
+          const gradeBetween = (a: SplineNode, b: SplineNode) => {
+            const d = Math.hypot(b.x - a.x, b.y - a.y);
             if (d < 0.5) return null;
-            return { pct: (((q.z ?? 0) - (activePt.z ?? 0)) / d) * 100, d };
+            return { pct: (((b.z ?? 0) - (a.z ?? 0)) / d) * 100, d };
           };
-          const gNext = activeIdx !== null && (props.isClosed || activeIdx < nPts - 1) ? gradeTo(activeIdx + 1) : null;
-          const gPrev = activeIdx !== null && (props.isClosed || activeIdx > 0) ? gradeTo(activeIdx - 1) : null;
+          let gPrev: { pct: number; d: number } | null = null;
+          let gNext: { pct: number; d: number } | null = null;
+          if (isEditingBranch && activeBranch && props.selectedBranchNode && activePt) {
+            const bIdx = props.selectedBranchNode.nodeIndex;
+            if (bIdx > 0) gPrev = gradeBetween(activePt, activeBranch.points[bIdx - 1]);
+            if (bIdx < activeBranch.points.length - 1) gNext = gradeBetween(activePt, activeBranch.points[bIdx + 1]);
+          } else if (activeIdx !== null && nPts >= 2 && activePt) {
+            if (props.isClosed || activeIdx < nPts - 1) {
+              gNext = gradeBetween(activePt, props.controlPoints[(activeIdx + 1) % nPts]);
+            }
+            if (props.isClosed || activeIdx > 0) {
+              gPrev = gradeBetween(activePt, props.controlPoints[(activeIdx - 1 + nPts) % nPts]);
+            }
+          }
           const gradeColor = (p: number) => Math.abs(p) <= 12 ? '#4ade80' : Math.abs(p) <= 18 ? '#facc15' : '#f87171';
+          const hasAdjacentTunnel = (() => {
+            if (!activePt?.isTunnel) return false;
+            if (isEditingBranch && activeBranch && props.selectedBranchNode) {
+              const bIdx = props.selectedBranchNode.nodeIndex;
+              const prevT = bIdx > 0 && Boolean(activeBranch.points[bIdx - 1]?.isTunnel);
+              const nextT = bIdx < activeBranch.points.length - 1 && Boolean(activeBranch.points[bIdx + 1]?.isTunnel);
+              return prevT || nextT;
+            }
+            if (activeIdx !== null && nPts >= 2) {
+              const hasPrev = props.isClosed || activeIdx > 0;
+              const hasNext = props.isClosed || activeIdx < nPts - 1;
+              const prevT = hasPrev && Boolean(props.controlPoints[(activeIdx - 1 + nPts) % nPts]?.isTunnel);
+              const nextT = hasNext && Boolean(props.controlPoints[(activeIdx + 1) % nPts]?.isTunnel);
+              return prevT || nextT;
+            }
+            return false;
+          })();
 
                     return (
           <>
@@ -1176,9 +1241,14 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
                 <div>
                   <span style={{ fontSize: 12, fontWeight: 900, color: isEditingBranch ? '#f59e0b' : '#38bdf8', textTransform: 'uppercase' }}>
                     {isEditingBranch && props.selectedBranchNode && activeBranch
-                      ? `BOX / RAMAL · NÓ #${props.selectedBranchNode.nodeIndex + 1} DE ${activeBranch.points.length}`
+                      ? `PONTO #${activeSeqNum ?? (props.selectedBranchNode.nodeIndex + 1)}`
                       : (activeIdx !== null ? `PONTO #${activeIdx + 1} DE ${props.controlPoints.length}` : 'NENHUM PONTO')}
                   </span>
+                  {isEditingBranch && props.selectedBranchNode && activeBranch && (
+                    <span style={{ marginLeft: 6, background: '#f59e0b', color: '#000', fontSize: 9, fontWeight: 900, padding: '2px 5px', borderRadius: 4 }}>
+                      BOX / RAMAL · NÓ {props.selectedBranchNode.nodeIndex + 1}/{activeBranch.points.length}
+                    </span>
+                  )}
                   {!isEditingBranch && activeIdx === 0 && (
                     <span style={{ marginLeft: 6, background: '#10b981', color: '#000', fontSize: 9, fontWeight: 900, padding: '2px 5px', borderRadius: 4 }}>
                       LINHA DA META
@@ -1188,12 +1258,12 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
                 <div style={{ display: 'flex', gap: 4 }}>
                   <button
                     onClick={() => {
-                      if (props.controlPoints.length > 0) {
-                        const next = activeIdx !== null && activeIdx > 0 ? activeIdx - 1 : props.controlPoints.length - 1;
-                        props.onSelectPointIndex(next);
+                      if (navItems.length > 0) {
+                        const prev = currentNavIdx > 0 ? currentNavIdx - 1 : navItems.length - 1;
+                        selectNavItem(navItems[prev]);
                       }
                     }}
-                    disabled={props.controlPoints.length === 0}
+                    disabled={navItems.length === 0}
                     style={{ background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: 5, padding: '4px 8px', color: '#cbd5e1', cursor: 'pointer' }}
                     title="Ponto anterior"
                   >
@@ -1201,12 +1271,12 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
                   </button>
                   <button
                     onClick={() => {
-                      if (props.controlPoints.length > 0) {
-                        const next = activeIdx !== null && activeIdx < props.controlPoints.length - 1 ? activeIdx + 1 : 0;
-                        props.onSelectPointIndex(next);
+                      if (navItems.length > 0) {
+                        const next = currentNavIdx >= 0 && currentNavIdx < navItems.length - 1 ? currentNavIdx + 1 : 0;
+                        selectNavItem(navItems[next]);
                       }
                     }}
-                    disabled={props.controlPoints.length === 0}
+                    disabled={navItems.length === 0}
                     style={{ background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: 5, padding: '4px 8px', color: '#cbd5e1', cursor: 'pointer' }}
                     title="Ponto seguinte"
                   >
@@ -1215,31 +1285,53 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
                 </div>
               </div>
 
-              {/* PAP?IS EXCLUSIVOS DO PONTO (PARTIDA, ENTRADA BOX, SA?DA BOX) */}
+              {/* PAPÉIS EXCLUSIVOS DO PONTO (PARTIDA / BOX / COPIAR) */}
               <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
-                <button
-                  onClick={() => props.onSetStartPoint && props.onSetStartPoint()}
-                  style={{
-                    flex: 1,
-                    minWidth: '95px',
-                    padding: '6px 8px',
-                    borderRadius: 6,
-                    border: activeIdx === 0 ? '1px solid #10b981' : '1px solid rgba(255,255,255,0.1)',
-                    background: activeIdx === 0 ? 'rgba(16, 185, 129, 0.25)' : 'rgba(255,255,255,0.04)',
-                    color: activeIdx === 0 ? '#34d399' : '#94a3b8',
-                    fontSize: 10,
-                    fontWeight: 800,
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 4
-                  }}
-                  title="Marca este ponto como Linha da Meta / Partida (exclusivo)"
-                >
-                  <span>{activeIdx === 0 ? '✓' : '○'}</span>
-                  <span>🏁 Partida/Meta</span>
-                </button>
+                {isEditingBranch ? (
+                  <div
+                    style={{
+                      flex: 1,
+                      minWidth: '115px',
+                      padding: '6px 8px',
+                      borderRadius: 6,
+                      border: '1px solid rgba(245, 158, 11, 0.45)',
+                      background: 'rgba(245, 158, 11, 0.14)',
+                      color: '#fbbf24',
+                      fontSize: 10,
+                      fontWeight: 800,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 4
+                    }}
+                  >
+                    <span>🅿️ Ponto da Box / Ramal</span>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => props.onSetStartPoint && props.onSetStartPoint()}
+                    style={{
+                      flex: 1,
+                      minWidth: '95px',
+                      padding: '6px 8px',
+                      borderRadius: 6,
+                      border: activeIdx === 0 ? '1px solid #10b981' : '1px solid rgba(255,255,255,0.1)',
+                      background: activeIdx === 0 ? 'rgba(16, 185, 129, 0.25)' : 'rgba(255,255,255,0.04)',
+                      color: activeIdx === 0 ? '#34d399' : '#94a3b8',
+                      fontSize: 10,
+                      fontWeight: 800,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 4
+                    }}
+                    title="Marca este ponto como Linha da Meta / Partida (exclusivo)"
+                  >
+                    <span>{activeIdx === 0 ? '✓' : '○'}</span>
+                    <span>🏁 Partida/Meta</span>
+                  </button>
+                )}
                 {((activeIdx !== null && activeIdx > 0) || (isEditingBranch && props.selectedBranchNode && props.selectedBranchNode.nodeIndex > 0)) && props.onUpdateNodeProperties && (
                   <button
                     onClick={() => {
@@ -1441,7 +1533,7 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
                               min={item.min}
                               max={item.max}
                               defaultValue={displayVal}
-                              key={`${activeIdx}_${captureSide}_${item.key}_${item.valL.toFixed(1)}_${item.valR.toFixed(1)}`}
+                              key={`${activeKey}_${captureSide}_${item.key}_${item.valL.toFixed(1)}_${item.valR.toFixed(1)}`}
                               onBlur={(e) => commitInput(e.target.value)}
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter') {
@@ -1495,7 +1587,7 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
                     <button
                       onClick={() => {
                         if (!props.onUpdateNodeProperties || !activePt) return;
-                        const upd: Record<string, number | undefined> = { width: asphaltW };
+                        const upd: Record<string, number | string | undefined> = { width: asphaltW };
                         ZONE_KEYS.forEach(k => {
                           upd[k] = zoneOf(k, 'L');
                           upd[k + 'L'] = zoneOf(k, 'L');
@@ -1626,11 +1718,11 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
                     />
                     <div style={{ display: 'flex', gap: 4 }}>
                       {[
-                        { label: '-6m Túnel', val: -6 },
-                        { label: 'Plano (0m)', val: 0 },
-                        { label: '+5m', val: 5 },
-                        { label: '+12m Ponte', val: 12 },
-                        { label: '+20m', val: 20 }
+                        { label: '-16m', val: -16 },
+                        { label: '-6m', val: -6 },
+                        { label: '0m', val: 0 },
+                        { label: '+12m', val: 12 },
+                        { label: '+25m', val: 25 }
                       ].map(p => (
                         <button
                           key={p.label}
@@ -1650,6 +1742,54 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
                           {p.label}
                         </button>
                       ))}
+                    </div>
+                  </div>
+
+                  {/* 3b. TÚNEL OPCIONAL NESTE PONTO */}
+                  <div style={{ background: '#0b1329', padding: 10, borderRadius: 8, border: activePt.isTunnel ? '1px solid #a855f7' : '1px solid #1e293b', marginBottom: 10 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                      <span style={{ fontSize: 11, fontWeight: 800, color: activePt.isTunnel ? '#c084fc' : '#f1f5f9' }}>
+                        🚇 Túnel neste ponto?
+                      </span>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <button
+                          onClick={() => props.onUpdateNodeProperties?.({ isTunnel: false }, false)}
+                          style={{
+                            background: !activePt.isTunnel ? '#334155' : 'rgba(30, 41, 59, 0.6)',
+                            color: !activePt.isTunnel ? '#ffffff' : '#94a3b8',
+                            border: !activePt.isTunnel ? '1px solid #64748b' : '1px solid rgba(255,255,255,0.08)',
+                            borderRadius: 5,
+                            padding: '4px 10px',
+                            fontSize: 10,
+                            fontWeight: 800,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          NÃO
+                        </button>
+                        <button
+                          onClick={() => props.onUpdateNodeProperties?.({ isTunnel: true }, false)}
+                          style={{
+                            background: activePt.isTunnel ? '#9333ea' : 'rgba(30, 41, 59, 0.6)',
+                            color: activePt.isTunnel ? '#ffffff' : '#cbd5e1',
+                            border: activePt.isTunnel ? '1px solid #c084fc' : '1px solid rgba(255,255,255,0.12)',
+                            borderRadius: 5,
+                            padding: '4px 10px',
+                            fontSize: 10,
+                            fontWeight: 800,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          SIM · Túnel
+                        </button>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 9.5, color: activePt.isTunnel ? '#d8b4fe' : '#94a3b8', lineHeight: 1.35 }}>
+                      {!activePt.isTunnel
+                        ? 'Opcional a qualquer altura (0m, -16m, +40m). Ativa para cobrir este ponto com túnel.'
+                        : hasAdjacentTunnel
+                          ? '✓ Ligado ao ponto vizinho num túnel contínuo.'
+                          : '✓ Túnel curto (do meio do ponto anterior até ao meio do seguinte). Ativa no ponto seguinte para alongar.'}
                     </div>
                   </div>
 

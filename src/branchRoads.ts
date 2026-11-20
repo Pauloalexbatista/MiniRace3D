@@ -53,12 +53,8 @@ export function buildBranchGeometries(
       gravelGeo: null,
       guardrailLeftGeo: null,
       guardrailRightGeo: null,
-      outlineGeo: (() => {
-      if (outlineVerts.length === 0) return null;
-      const geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.Float32BufferAttribute(outlineVerts, 3));
-      return geo;
-    })()
+      outlineGeo: null,
+      redRibbonGeo: null
     };
   }
 
@@ -138,25 +134,7 @@ function distToSeg2D(px: number, pz: number, ax: number, az: number, bx: number,
   for (const branch of branches) {
     if (!branch.points || branch.points.length < 2) continue;
 
-    let densePoints: SplineNode[] = [];
-    if (branch.points.length === 2) {
-      const pA = branch.points[0];
-      const pB = branch.points[1];
-      const dist = Math.hypot(pB.x - pA.x, pB.y - pA.y);
-      const steps = Math.max(6, Math.ceil(dist / 4));
-      for (let s = 0; s <= steps; s++) {
-        const t = s / steps;
-        densePoints.push({
-          x: pA.x + (pB.x - pA.x) * t,
-          y: pA.y + (pB.y - pA.y) * t,
-          z: (pA.z ?? 0) + ((pB.z ?? 0) - (pA.z ?? 0)) * t,
-          width: (pA.width ?? 18) + ((pB.width ?? 18) - (pA.width ?? 18)) * t,
-          banking: 0
-        });
-      }
-    } else {
-      densePoints = computeSpline(branch.points, false);
-    }
+    const densePoints: SplineNode[] = computeSpline(branch.points, false);
 
     const M = densePoints.length;
     if (M < 2) continue;

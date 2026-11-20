@@ -343,7 +343,24 @@ export const Track3D: React.FC<Track3DProps> = ({
   const embankColor = themeConfig.embankColor;
   const wallColor = themeConfig.wallColor;
   const outlineColor = themeConfig.outlineColor;
-  const [draggingIdx, setDraggingIdx] = React.useState<number | null>(null);
+  type DragNodeState =
+    | { kind: 'main'; index: number; y: number; startX: number; startY: number; moved: boolean }
+    | { kind: 'branch'; branchId: string; nodeIndex: number; y: number; startX: number; startY: number; moved: boolean };
+  const [draggingNode, setDraggingNode] = React.useState<DragNodeState | null>(null);
+  const dragNodeRef = React.useRef<DragNodeState | null>(null);
+
+  React.useEffect(() => {
+    if (!draggingNode) return;
+    const handleWinPointerUp = () => {
+      if (!dragNodeRef.current) return;
+      dragNodeRef.current = null;
+      setDraggingNode(null);
+      onDragStateChange?.(false);
+      document.body.style.cursor = 'default';
+    };
+    window.addEventListener('pointerup', handleWinPointerUp);
+    return () => window.removeEventListener('pointerup', handleWinPointerUp);
+  }, [draggingNode, onDragStateChange]);
 
 
   // branchGeos moved below geometries useMemo to receive geometries.frames directly
@@ -1028,12 +1045,12 @@ export const Track3D: React.FC<Track3DProps> = ({
 
       // Fechar a "manta verde" / talude nos encontros de ponte para não se ver o interior oco:
       // Se um frame tem talude de terra e o outro entra no viaduto/ponte, geramos uma parede vertical transversal de fecho.
-      if (!isBridgeOverpass[i] && isBridgeOverpass[nextIdx] && f.pos.y > 0.5) {
+      if (!isBridgeOverpass[i] && isBridgeOverpass[nextIdx] && f.pos.y > groundY + 0.85) {
         // Encontro à entrada do viaduto: fechar corte transversal no frame i
         // Lado esquerdo: pWallBaseOuterL(b0) -> pEmbankL(b0+1) descendo até ao chão
         embankmentIndices.push(b0, b0 + 1, b0 + 2);
         embankmentIndices.push(b0 + 2, b0 + 1, b0 + 3);
-      } else if (isBridgeOverpass[i] && !isBridgeOverpass[nextIdx] && fNext.pos.y > 0.5) {
+      } else if (isBridgeOverpass[i] && !isBridgeOverpass[nextIdx] && fNext.pos.y > groundY + 0.85) {
         // Encontro à saída do viaduto: fechar corte transversal no frame nextIdx
         embankmentIndices.push(bn0, bn0 + 2, bn0 + 1);
         embankmentIndices.push(bn0 + 2, bn0 + 3, bn0 + 1);
@@ -1122,69 +1139,185 @@ export const Track3D: React.FC<Track3DProps> = ({
     const bridgeWallLGeo = bridgeWallLIndices.length > 0 ? createGeo(guardrailLeftVerts, bridgeWallLIndices, guardrailLeftColors) : null;
     const bridgeWallRGeo = bridgeWallRIndices.length > 0 ? createGeo(guardrailRightVerts, bridgeWallRIndices, guardrailRightColors) : null;
 
-    // 9.5 Túnel Automático abaixo do chão (só tapa quando a pista desce <= -3.2m)
-    const TUNNEL_THRESHOLD_Y = -3.2;
+    // 9.5 Túnel Opcional por Ponto (funciona a qualquer elevação: -16m, 0m, +40m...)
     const tunnelVerts: number[] = [];
     const tunnelIndices: number[] = [];
-    const tunnelLights: { pos: THREE.Vector3; rotY: number }[] = [];
+    const tunnelPortalVerts: number[] = [];
+    const tunnelPortalIndices: number[] = [];
+    const candidateTunnelLights: { pos: THREE.Vector3; rotY: number }[] = [];
     const tunnelLightVerts: number[] = [];
     const tunnelLightIndices: number[] = [];
 
-    const isTunnelFrame = frames.map((f) => f.pos.y <= TUNNEL_THRESHOLD_Y);
-    if (isTunnelFrame.some(Boolean)) {
-      for (let i = 0; i < N; i++) {
-        const f = frames[i];
-        const hw = f.cross.halfWidth;
-        const wL = hw + (spline[i] ? bermaWidth(spline[i], 'L') : 4.5);
-        const wR = hw + (spline[i] ? bermaWidth(spline[i], 'R') : 4.5);
+    const appendTunnelFromFrames = (
+      srcFrames: Array<{ pos: THREE.Vector3; side: THREE.Vector3; up: THREE.Vector3; tangent: THREE.Vector3 }>,
+      tunnelMask: boolean[],
+      wLArr: number[],
+      wRArr: number[],
+      closed: boolean
+    ) => {
+      const len = srcFrames.length;
+      if (len < 2 || !tunnelMask.some(Boolean)) return;
 
-        const pLBot = f.pos.clone().add(f.side.clone().multiplyScalar(wL)).add(new THREE.Vector3(0, -0.5, 0));
-        const pLTop = f.pos.clone().add(f.side.clone().multiplyScalar(wL * 0.92)).add(new THREE.Vector3(0, 7.8, 0));
-        const pCrown = f.pos.clone().add(new THREE.Vector3(0, 9.8, 0));
-        const pRTop = f.pos.clone().sub(f.side.clone().multiplyScalar(wR * 0.92)).add(new THREE.Vector3(0, 7.8, 0));
-        const pRBot = f.pos.clone().sub(f.side.clone().multiplyScalar(wR)).add(new THREE.Vector3(0, -0.5, 0));
+      const maxSeg = closed ? len : len - 1;
+      const segActive: boolean[] = new Array(maxSeg);
+      let anySeg = false;
+      for (let i = 0; i < maxSeg; i++) {
+        const nextIdx = (i + 1) % len;
+        const active = Boolean(tunnelMask[i] && tunnelMask[nextIdx]);
+        segActive[i] = active;
+        if (active) anySeg = true;
+      }
+      if (!anySeg) return;
 
-        tunnelVerts.push(
-          pLBot.x, pLBot.y, pLBot.z,
-          pLTop.x, pLTop.y, pLTop.z,
-          pCrown.x, pCrown.y, pCrown.z,
-          pRTop.x, pRTop.y, pRTop.z,
-          pRBot.x, pRBot.y, pRBot.z
-        );
+      const baseV = tunnelVerts.length / 3;
+      const getCrossPts = (idx: number) => {
+        const f = srcFrames[idx];
+        const wL = wLArr[idx];
+        const wR = wRArr[idx];
+        return [
+          f.pos.clone().addScaledVector(f.side, wL).addScaledVector(f.up, -0.5),
+          f.pos.clone().addScaledVector(f.side, wL * 0.92).addScaledVector(f.up, 7.8),
+          f.pos.clone().addScaledVector(f.up, 9.8),
+          f.pos.clone().addScaledVector(f.side, -wR * 0.92).addScaledVector(f.up, 7.8),
+          f.pos.clone().addScaledVector(f.side, -wR).addScaledVector(f.up, -0.5),
+        ];
+      };
 
-        if (isTunnelFrame[i] && i % 10 === 0) {
+      for (let i = 0; i < len; i++) {
+        const pts = getCrossPts(i);
+        for (const p of pts) tunnelVerts.push(p.x, p.y, p.z);
+        if (tunnelMask[i] && i % 10 === 0) {
+          const f = srcFrames[i];
           const rotY = Math.atan2(f.tangent.x, f.tangent.z);
-          tunnelLights.push({ pos: f.pos.clone().add(new THREE.Vector3(0, 9.0, 0)), rotY });
+          candidateTunnelLights.push({ pos: f.pos.clone().addScaledVector(f.up, 8.6), rotY });
         }
       }
 
-      const maxSeg = isClosed ? N : N - 1;
-      for (let i = 0; i < maxSeg; i++) {
-        const nextIdx = (i + 1) % N;
-        if (!isTunnelFrame[i] || !isTunnelFrame[nextIdx]) continue;
+      const pushPortal = (idx: number, dirSign: number) => {
+        const f = srcFrames[idx];
+        const wL = wLArr[idx];
+        const wR = wRArr[idx];
+        const inner = getCrossPts(idx);
+        const outer = [
+          f.pos.clone().addScaledVector(f.side, wL + 1.1).addScaledVector(f.up, -0.5),
+          f.pos.clone().addScaledVector(f.side, wL * 0.92 + 1.1).addScaledVector(f.up, 7.8 + 1.1),
+          f.pos.clone().addScaledVector(f.up, 9.8 + 1.1),
+          f.pos.clone().addScaledVector(f.side, -(wR * 0.92 + 1.1)).addScaledVector(f.up, 7.8 + 1.1),
+          f.pos.clone().addScaledVector(f.side, -(wR + 1.1)).addScaledVector(f.up, -0.5),
+        ];
+        const tanOff = f.tangent.clone().multiplyScalar(dirSign * 0.7);
+        const pBase = tunnelPortalVerts.length / 3;
+        // Ring 0 (0..4): outer mouth inner pts; Ring 1 (5..9): outer mouth outer pts
+        for (const p of inner) tunnelPortalVerts.push(p.x + tanOff.x, p.y + tanOff.y, p.z + tanOff.z);
+        for (const p of outer) tunnelPortalVerts.push(p.x + tanOff.x, p.y + tanOff.y, p.z + tanOff.z);
+        // Ring 2 (10..14): flush inner pts; Ring 3 (15..19): flush outer pts
+        for (const p of inner) tunnelPortalVerts.push(p.x, p.y, p.z);
+        for (const p of outer) tunnelPortalVerts.push(p.x, p.y, p.z);
 
-        const a = i * 5;
-        const b = nextIdx * 5;
+        for (let k = 0; k < 4; k++) {
+          const i0 = pBase + k;
+          const i1 = pBase + k + 1;
+          const o0 = pBase + 5 + k;
+          const o1 = pBase + 5 + k + 1;
+          const fi0 = pBase + 10 + k;
+          const fi1 = pBase + 10 + k + 1;
+          const fo0 = pBase + 15 + k;
+          const fo1 = pBase + 15 + k + 1;
+          // Front collar face
+          tunnelPortalIndices.push(i0, o0, i1, i1, o0, o1);
+          // Back collar face
+          tunnelPortalIndices.push(fi0, fi1, fo0, fi1, fo1, fo0);
+          // Outer rim
+          tunnelPortalIndices.push(o0, fo0, o1, o1, fo0, fo1);
+          // Inner rim
+          tunnelPortalIndices.push(i0, i1, fi0, i1, fi1, fi0);
+        }
+      };
+
+      for (let i = 0; i < maxSeg; i++) {
+        if (!segActive[i]) continue;
+        const nextIdx = (i + 1) % len;
+
+        const a = baseV + i * 5;
+        const b = baseV + nextIdx * 5;
         for (let k = 0; k < 4; k++) {
           tunnelIndices.push(a + k, b + k, a + k + 1);
           tunnelIndices.push(a + k + 1, b + k, b + k + 1);
         }
 
         if (i % 4 === 0) {
-          const fA = frames[i];
-          const fB = frames[nextIdx];
+          const fA = srcFrames[i];
+          const fB = srcFrames[nextIdx];
           const vBase = tunnelLightVerts.length / 3;
           const stripW = 1.1;
-          const l1 = fA.pos.clone().add(fA.side.clone().multiplyScalar(stripW)).add(new THREE.Vector3(0, 9.5, 0));
-          const r1 = fA.pos.clone().sub(fA.side.clone().multiplyScalar(stripW)).add(new THREE.Vector3(0, 9.5, 0));
-          const l2 = fB.pos.clone().add(fB.side.clone().multiplyScalar(stripW)).add(new THREE.Vector3(0, 9.5, 0));
-          const r2 = fB.pos.clone().sub(fB.side.clone().multiplyScalar(stripW)).add(new THREE.Vector3(0, 9.5, 0));
+          const l1 = fA.pos.clone().addScaledVector(fA.side, stripW).addScaledVector(fA.up, 9.45);
+          const r1 = fA.pos.clone().addScaledVector(fA.side, -stripW).addScaledVector(fA.up, 9.45);
+          const l2 = fB.pos.clone().addScaledVector(fB.side, stripW).addScaledVector(fB.up, 9.45);
+          const r2 = fB.pos.clone().addScaledVector(fB.side, -stripW).addScaledVector(fB.up, 9.45);
           tunnelLightVerts.push(l1.x, l1.y, l1.z, r1.x, r1.y, r1.z, l2.x, l2.y, l2.z, r2.x, r2.y, r2.z);
           tunnelLightIndices.push(vBase, vBase + 2, vBase + 1, vBase + 1, vBase + 2, vBase + 3);
         }
+
+        const isRunStart = closed ? !segActive[(i - 1 + maxSeg) % maxSeg] : (i === 0 || !segActive[i - 1]);
+        const isRunEnd = closed ? !segActive[(i + 1) % maxSeg] : (i === maxSeg - 1 || !segActive[i + 1]);
+        if (isRunStart) pushPortal(i, -1);
+        if (isRunEnd) pushPortal(nextIdx, 1);
+      }
+    };
+
+    const mainTunnelMask = spline.map((s) => Boolean(s.isTunnel));
+    const mainTunnelWL = wallOuterDistL.map((d, i) => Math.max(frames[i].cross.halfWidth + 0.5, d));
+    const mainTunnelWR = wallOuterDistR.map((d, i) => Math.max(frames[i].cross.halfWidth + 0.5, d));
+    appendTunnelFromFrames(frames, mainTunnelMask, mainTunnelWL, mainTunnelWR, isClosed);
+
+    if (branches && branches.length > 0) {
+      for (const b of branches) {
+        if (!b.points || b.points.length < 2 || !b.points.some((p) => p.isTunnel)) continue;
+        const dense = computeSpline(b.points, false);
+        const M = dense.length;
+        if (M < 2) continue;
+        const bFrames: Array<{ pos: THREE.Vector3; side: THREE.Vector3; up: THREE.Vector3; tangent: THREE.Vector3 }> = [];
+        const bWL: number[] = [];
+        const bWR: number[] = [];
+        const bMask: boolean[] = [];
+        for (let i = 0; i < M; i++) {
+          const curr = dense[i];
+          const prev = dense[Math.max(0, i - 1)];
+          const next = dense[Math.min(M - 1, i + 1)];
+          const pCurr = new THREE.Vector3(curr.x, curr.z ?? 0, curr.y);
+          const pPrev = new THREE.Vector3(prev.x, prev.z ?? 0, prev.y);
+          const pNext = new THREE.Vector3(next.x, next.z ?? 0, next.y);
+          let tangent = new THREE.Vector3().subVectors(pNext, pPrev).normalize();
+          if (tangent.lengthSq() === 0) tangent.set(1, 0, 0);
+          let up = new THREE.Vector3(0, 1, 0);
+          let side = new THREE.Vector3().crossVectors(tangent, up).normalize();
+          if (side.lengthSq() === 0) side.set(0, 0, 1);
+          up = new THREE.Vector3().crossVectors(side, tangent).normalize();
+          const hw = (curr.width || 18) / 2;
+          if (curr.banking) {
+            const bankingRad = (curr.banking * Math.PI) / 180;
+            side.applyAxisAngle(tangent, bankingRad);
+            up.applyAxisAngle(tangent, bankingRad);
+            pCurr.y += Math.abs(Math.sin(bankingRad)) * hw;
+          }
+          bFrames.push({ pos: pCurr, side, up, tangent });
+          bWL.push(hw + bermaWidth(curr, 'L') + getZone(curr, 'wallThickness', 'L'));
+          bWR.push(hw + bermaWidth(curr, 'R') + getZone(curr, 'wallThickness', 'R'));
+          bMask.push(Boolean(curr.isTunnel));
+        }
+        appendTunnelFromFrames(bFrames, bMask, bWL, bWR, false);
       }
     }
+
+    const tunnelLights =
+      candidateTunnelLights.length <= 16
+        ? candidateTunnelLights
+        : Array.from({ length: 16 }, (_, k) =>
+            candidateTunnelLights[Math.min(candidateTunnelLights.length - 1, Math.floor((k * candidateTunnelLights.length) / 16))]
+          );
+
     const tunnelGeo = tunnelIndices.length > 0 ? createGeo(tunnelVerts, tunnelIndices) : null;
+    const tunnelPortalGeo = tunnelPortalIndices.length > 0 ? createGeo(tunnelPortalVerts, tunnelPortalIndices) : null;
     const tunnelLightGeo = tunnelLightIndices.length > 0 ? createGeo(tunnelLightVerts, tunnelLightIndices) : null;
 
     const whiteLineGeo = createGeo(whiteLineVerts, whiteLineIndices, whiteLineColors);
@@ -1276,6 +1409,7 @@ export const Track3D: React.FC<Track3DProps> = ({
       pillarGeo,
       crossBeamGeo,
       tunnelGeo,
+      tunnelPortalGeo,
       tunnelLightGeo,
       tunnelLights,
       outlineGeo,
@@ -1298,7 +1432,7 @@ export const Track3D: React.FC<Track3DProps> = ({
         isClosed,
       }
     };
-  }, [spline, isClosed, pitSpline, branches, trackThemeId, showEmbankments]);
+  }, [spline, isClosed, pitSpline, branches, trackThemeId, showEmbankments, groundY]);
 
   const boxPaintTex = useMemo(() => {
     const canvas = document.createElement('canvas');
@@ -1692,7 +1826,7 @@ export const Track3D: React.FC<Track3DProps> = ({
     return buildBranchGeometries(
       branches,
       asphaltColor,
-      themeConfig.curbYellowColor,
+      themeConfig.curbWarningColor,
       themeConfig.curbApexColor,
       grassColor,
       themeConfig.sandColor,
@@ -2440,7 +2574,7 @@ function disposeGeometriesIn(obj: object | null | undefined) {
         </mesh>
       )}
 
-      {/* 6.3 Túnel Automático abaixo do chão (z <= -3.2m) + Luzes LED e Iluminação Interior */}
+      {/* 6.3 Túnel Opcional por Ponto + Pórticos + Luzes LED e Iluminação Interior */}
       {geometries.tunnelGeo && (
         <group>
           <TrimeshColliderWrap enabled={enablePhysics} geo={geometries.tunnelGeo} surface="WALL">
@@ -2448,6 +2582,11 @@ function disposeGeometriesIn(obj: object | null | undefined) {
               <meshStandardMaterial color="#1e293b" roughness={0.75} metalness={0.15} side={THREE.DoubleSide} />
             </mesh>
           </TrimeshColliderWrap>
+          {geometries.tunnelPortalGeo && (
+            <mesh geometry={geometries.tunnelPortalGeo} castShadow receiveShadow>
+              <meshStandardMaterial color="#94a3b8" roughness={0.65} metalness={0.1} side={THREE.DoubleSide} />
+            </mesh>
+          )}
           {geometries.tunnelLightGeo && (
             <mesh geometry={geometries.tunnelLightGeo}>
               <meshStandardMaterial color="#fef08a" emissive="#fef08a" emissiveIntensity={2.6} side={THREE.DoubleSide} />
@@ -2603,6 +2742,44 @@ function disposeGeometriesIn(obj: object | null | undefined) {
       )}
 
       
+          {/* Ground Drag Interception Plane: only intercepts when actively dragging */}
+          {draggingNode !== null && (
+            <mesh
+              rotation={[-Math.PI / 2, 0, 0]}
+              position={[0, draggingNode.y - 0.01, 0]}
+              onPointerMove={(e) => {
+                const active = dragNodeRef.current;
+                if (!active) return;
+                e.stopPropagation();
+                if (!active.moved) {
+                  if (Math.hypot(e.clientX - active.startX, e.clientY - active.startY) <= 4) return;
+                  active.moved = true;
+                }
+                if (active.kind === 'main') {
+                  onMovePoint?.(active.index, e.point.x, e.point.z);
+                } else {
+                  onMoveBranchNode?.(active.branchId, active.nodeIndex, e.point.x, e.point.z);
+                }
+              }}
+              onPointerUp={(e) => {
+                e.stopPropagation();
+                const active = dragNodeRef.current;
+                if (!active) return;
+                dragNodeRef.current = null;
+                setDraggingNode(null);
+                onDragStateChange?.(false);
+                document.body.style.cursor = 'default';
+                if (!active.moved) {
+                  if (active.kind === 'main') onSelectPoint?.(active.index);
+                  else onSelectBranchNode?.(active.branchId, active.nodeIndex);
+                }
+              }}
+            >
+              <planeGeometry args={[20000, 20000]} />
+              <meshBasicMaterial visible={false} />
+            </mesh>
+          )}
+
           {/* Pontos Interativos dos Ramais */}
           {showControlPoints && branches && (() => {
             let nextSeqNum = controlPoints.length + 1;
@@ -2617,6 +2794,7 @@ function disposeGeometriesIn(obj: object | null | undefined) {
                 const seqNum = nextSeqNum++;
                 const isSelected = selectedBranchNode?.branchId === branch.id && selectedBranchNode?.nodeIndex === bpIdx;
                 const bpZ = bp.z ?? 0;
+                const nodeColor = isSelected ? '#00f3ff' : (bp.isTunnel ? '#a855f7' : '#f59e0b');
                 return (
                   <group
                     key={`branch_${branch.id}_${bpIdx}`}
@@ -2626,14 +2804,49 @@ function disposeGeometriesIn(obj: object | null | undefined) {
                     }}
                     onPointerDown={(e) => {
                       e.stopPropagation();
-                      if (onSelectBranchNode) onSelectBranchNode(branch.id, bpIdx);
+                      if (e.button !== 0) return;
+                      const drag: DragNodeState = {
+                        kind: 'branch',
+                        branchId: branch.id,
+                        nodeIndex: bpIdx,
+                        y: bpZ,
+                        startX: e.clientX,
+                        startY: e.clientY,
+                        moved: false
+                      };
+                      dragNodeRef.current = drag;
+                      setDraggingNode(drag);
+                      onDragStateChange?.(true);
+                    }}
+                    onPointerUp={(e) => {
+                      e.stopPropagation();
+                      const active = dragNodeRef.current;
+                      if (!active) {
+                        onSelectBranchNode?.(branch.id, bpIdx);
+                        return;
+                      }
+                      dragNodeRef.current = null;
+                      setDraggingNode(null);
+                      onDragStateChange?.(false);
+                      document.body.style.cursor = 'default';
+                      if (!active.moved) {
+                        onSelectBranchNode?.(branch.id, bpIdx);
+                      }
+                    }}
+                    onPointerOver={(e) => {
+                      e.stopPropagation();
+                      document.body.style.cursor = 'grab';
+                    }}
+                    onPointerOut={(e) => {
+                      e.stopPropagation();
+                      if (!dragNodeRef.current) document.body.style.cursor = 'default';
                     }}
                   >
                     <mesh>
                       <sphereGeometry args={[isSelected ? 4.2 : 3.0, 20, 20]} />
                       <meshStandardMaterial
-                        color={isSelected ? '#00f3ff' : '#f59e0b'}
-                        emissive={isSelected ? '#00f3ff' : '#f59e0b'}
+                        color={nodeColor}
+                        emissive={nodeColor}
                         emissiveIntensity={isSelected ? 1.8 : 0.8}
                       />
                     </mesh>
@@ -2648,6 +2861,12 @@ function disposeGeometriesIn(obj: object | null | undefined) {
                         <meshBasicMaterial color="#00f3ff" side={THREE.DoubleSide} />
                       </mesh>
                     )}
+                    {Math.abs(bpZ) > 0.3 && (
+                      <mesh position={[0, -bpZ / 2, 0]}>
+                        <cylinderGeometry args={[0.25, 0.25, Math.abs(bpZ), 8]} />
+                        <meshBasicMaterial color={isSelected ? '#00f3ff' : (bp.isTunnel ? '#a855f7' : '#f59e0b')} transparent opacity={0.65} />
+                      </mesh>
+                    )}
                   </group>
                 );
               })
@@ -2657,49 +2876,48 @@ function disposeGeometriesIn(obj: object | null | undefined) {
           {/* 11. Pontos de Controlo / Nos CAD Interativos com Arrastamento e Numeracao */}
       {showControlPoints && (
         <group>
-          {/* Ground Drag Interception Plane: only intercepts when actively dragging */}
-          {draggingIdx !== null && (
-            <mesh
-              visible={false}
-              rotation={[-Math.PI / 2, 0, 0]}
-              position={[0, 0, 0]}
-              onPointerMove={(e) => {
-                if (onMovePoint) {
-                  e.stopPropagation();
-                  onMovePoint(draggingIdx, e.point.x, e.point.z);
-                }
-              }}
-              onPointerUp={(e) => {
-                e.stopPropagation();
-                setDraggingIdx(null);
-                if (onDragStateChange) onDragStateChange(false);
-              }}
-            >
-              <planeGeometry args={[20000, 20000]} />
-              <meshBasicMaterial />
-            </mesh>
-          )}
-
           {controlPoints.map((cp, idx) => {
             const isSelected = selectedPointIndex === idx;
             const cpZ = cp.z ?? 0;
+            const nodeColor = isSelected
+              ? '#00f3ff'
+              : (idx === 0 ? '#10b981' : (cp.isTunnel ? '#a855f7' : (idx === controlPoints.length - 1 && !isClosed ? '#ef4444' : '#f59e0b')));
             return (
               <group
                 key={idx}
                 position={[cp.x, cpZ, cp.y]}
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (onSelectPoint) onSelectPoint(idx);
                 }}
                 onPointerDown={(e) => {
                   e.stopPropagation();
-                  setDraggingIdx(idx);
-                  if (onDragStateChange) onDragStateChange(true);
+                  if (e.button !== 0) return;
+                  const drag: DragNodeState = {
+                    kind: 'main',
+                    index: idx,
+                    y: cpZ,
+                    startX: e.clientX,
+                    startY: e.clientY,
+                    moved: false
+                  };
+                  dragNodeRef.current = drag;
+                  setDraggingNode(drag);
+                  onDragStateChange?.(true);
                 }}
                 onPointerUp={(e) => {
                   e.stopPropagation();
-                  setDraggingIdx(null);
-                  if (onDragStateChange) onDragStateChange(false);
+                  const active = dragNodeRef.current;
+                  if (!active) {
+                    onSelectPoint?.(idx);
+                    return;
+                  }
+                  dragNodeRef.current = null;
+                  setDraggingNode(null);
+                  onDragStateChange?.(false);
+                  document.body.style.cursor = 'default';
+                  if (!active.moved) {
+                    onSelectPoint?.(idx);
+                  }
                 }}
                 onPointerOver={(e) => {
                   e.stopPropagation();
@@ -2707,14 +2925,14 @@ function disposeGeometriesIn(obj: object | null | undefined) {
                 }}
                 onPointerOut={(e) => {
                   e.stopPropagation();
-                  if (draggingIdx === null) document.body.style.cursor = 'default';
+                  if (!dragNodeRef.current) document.body.style.cursor = 'default';
                 }}
               >
                 <mesh>
                   <sphereGeometry args={[isSelected ? 4.5 : 3.0, 20, 20]} />
                   <meshStandardMaterial
-                    color={isSelected ? '#00f3ff' : (idx === 0 ? '#10b981' : (idx === controlPoints.length - 1 && !isClosed ? '#ef4444' : '#f59e0b'))}
-                    emissive={isSelected ? '#00f3ff' : (idx === 0 ? '#10b981' : (idx === controlPoints.length - 1 && !isClosed ? '#ef4444' : '#f59e0b'))}
+                    color={nodeColor}
+                    emissive={nodeColor}
                     emissiveIntensity={isSelected ? 1.8 : 0.8}
                   />
                 </mesh>
@@ -2736,7 +2954,7 @@ function disposeGeometriesIn(obj: object | null | undefined) {
                 {Math.abs(cpZ) > 0.3 && (
                   <mesh position={[0, -cpZ / 2, 0]}>
                     <cylinderGeometry args={[0.25, 0.25, Math.abs(cpZ), 8]} />
-                    <meshBasicMaterial color={isSelected ? '#00f3ff' : '#f59e0b'} transparent opacity={0.65} />
+                    <meshBasicMaterial color={isSelected ? '#00f3ff' : (cp.isTunnel ? '#a855f7' : '#f59e0b')} transparent opacity={0.65} />
                   </mesh>
                 )}
               </group>

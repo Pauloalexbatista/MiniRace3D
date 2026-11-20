@@ -471,12 +471,18 @@ export const RaceMode: React.FC<RaceModeProps> = ({
     for (const p of currentSpline) {
       if (p.z < minZ) minZ = p.z;
     }
+    for (const br of activeRaceCircuit?.branches || []) {
+      for (const bp of br.points || []) {
+        const bz = bp.z ?? 0;
+        if (bz < minZ) minZ = bz;
+      }
+    }
     if (!Number.isFinite(minZ)) minZ = 0;
     return {
       groundY: Math.min(-0.35, minZ - 0.35),
       safetyFloorY: Math.min(-2, minZ - 8),
     };
-  }, [currentSpline]);
+  }, [currentSpline, activeRaceCircuit?.branches]);
 
   // Reset per-race local refs whenever a new race mounts
   useEffect(() => {
