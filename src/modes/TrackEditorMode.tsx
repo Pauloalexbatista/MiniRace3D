@@ -475,6 +475,22 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
     setResetTrigger(prev => prev + 1);
   };
 
+  const handleTogglePitBoxPoint = () => {
+    if (selectedBranchNode === null) return;
+    pushHistory();
+    setBranches(prev => prev.map(b => {
+      if (b.id !== selectedBranchNode.branchId) return b;
+      const wasPitBox = Boolean(b.points[selectedBranchNode.nodeIndex]?.isPitBox);
+      return {
+        ...b,
+        points: b.points.map((bp, i) => ({
+          ...bp,
+          isPitBox: i === selectedBranchNode.nodeIndex ? !wasPitBox : false
+        }))
+      };
+    }));
+  };
+
   const handleSetAsPitEntry = () => {
     if (selectedPointIndex === null) return;
     setPitEntryIndex(selectedPointIndex);
@@ -2205,6 +2221,7 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
         pitSide={pitSide}
         pitOffset={pitOffset}
         onSetStartPoint={handleSetAsStartPoint}
+        onSetPitBoxPoint={handleTogglePitBoxPoint}
         onReverseTrack={handleReverseTrack}
         onApplyGlobalDefaults={handleApplyGlobalDefaults}
         onSetPitEntry={handleSetAsPitEntry}

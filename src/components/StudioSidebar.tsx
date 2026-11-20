@@ -71,6 +71,7 @@ export interface StudioSidebarProps {
   pitSide: 'left' | 'right';
   pitOffset: number;
   onSetStartPoint?: () => void;
+  onSetPitBoxPoint?: () => void;
   onReverseTrack?: () => void;
   onApplyGlobalDefaults?: (defaults: { roadWidth: number; shoulderWidth: number; whiteLineWidth: number; curbYellowWidth: number; curbRedWidth: number; grassWidth: number; sandWidth: number; gravelWidth: number; wallThickness: number }) => void;
   onSetPitEntry: () => void;
@@ -1249,6 +1250,11 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
                       BOX / RAMAL · NÓ {props.selectedBranchNode.nodeIndex + 1}/{activeBranch.points.length}
                     </span>
                   )}
+                  {isEditingBranch && activePt?.isPitBox && (
+                    <span style={{ marginLeft: 6, background: '#10b981', color: '#000', fontSize: 9, fontWeight: 900, padding: '2px 5px', borderRadius: 4 }}>
+                      ZONA DA BOX
+                    </span>
+                  )}
                   {!isEditingBranch && activeIdx === 0 && (
                     <span style={{ marginLeft: 6, background: '#10b981', color: '#000', fontSize: 9, fontWeight: 900, padding: '2px 5px', borderRadius: 4 }}>
                       LINHA DA META
@@ -1288,25 +1294,29 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
               {/* PAPÉIS EXCLUSIVOS DO PONTO (PARTIDA / BOX / COPIAR) */}
               <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
                 {isEditingBranch ? (
-                  <div
+                  <button
+                    onClick={() => props.onSetPitBoxPoint && props.onSetPitBoxPoint()}
                     style={{
                       flex: 1,
                       minWidth: '115px',
                       padding: '6px 8px',
                       borderRadius: 6,
-                      border: '1px solid rgba(245, 158, 11, 0.45)',
-                      background: 'rgba(245, 158, 11, 0.14)',
-                      color: '#fbbf24',
+                      border: activePt?.isPitBox ? '1px solid #10b981' : '1px solid rgba(245, 158, 11, 0.45)',
+                      background: activePt?.isPitBox ? 'rgba(16, 185, 129, 0.25)' : 'rgba(245, 158, 11, 0.12)',
+                      color: activePt?.isPitBox ? '#34d399' : '#fbbf24',
                       fontSize: 10,
                       fontWeight: 800,
+                      cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
                       gap: 4
                     }}
+                    title="Marca este ponto como centro da zona amarela de paragem/reparação da Box (50m). Clica novamente para voltar ao centro automático."
                   >
-                    <span>🅿️ Ponto da Box / Ramal</span>
-                  </div>
+                    <span>{activePt?.isPitBox ? '✓' : '○'}</span>
+                    <span>{activePt?.isPitBox ? '🅿️ Zona da Box (Pit Stop)' : '🅿️ Definir Zona da Box'}</span>
+                  </button>
                 ) : (
                   <button
                     onClick={() => props.onSetStartPoint && props.onSetStartPoint()}

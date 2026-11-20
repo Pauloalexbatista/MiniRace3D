@@ -20,6 +20,7 @@ export interface SplineNode {
   isExtendedTight?: boolean;
   isApexTight?: boolean;
   isTunnel?: boolean;
+  isPitBox?: boolean;
   maxWallRadius?: number;
   shoulderWidth?: number;
   whiteLineWidth?: number;
@@ -966,24 +967,27 @@ export function computePitStopZones(
   pitSpline?: SplineNode[]
 ): PitStopZone[] {
   const zones: PitStopZone[] = [];
-  const candidates: Array<{ id: string; dense: SplineNode[] }> = [];
+  const candidates: Array<{ id: string; dense: SplineNode[]; pitBoxNode?: SplineNode }> = [];
+  const anyExplicitPitBox = Boolean(branches?.some(b => b.points?.some(p => p.isPitBox)));
 
   if (branches && branches.length > 0) {
     for (let i = 0; i < branches.length; i++) {
       const b = branches[i];
       if (!b.points || b.points.length < 2) continue;
+      const pitBoxNode = b.points.find(p => p.isPitBox);
+      if (anyExplicitPitBox && !pitBoxNode) continue;
       const dense = computeSpline(b.points, false);
       if (dense.length >= 2) {
-        candidates.push({ id: b.id || `branch_${i}`, dense });
+        candidates.push({ id: b.id || `branch_${i}`, dense, pitBoxNode });
       }
     }
   }
-  if (pitSpline && pitSpline.length >= 2) {
+  if (!anyExplicitPitBox && pitSpline && pitSpline.length >= 2) {
     candidates.push({ id: 'pit_spline', dense: pitSpline });
   }
 
   for (const cand of candidates) {
-    const { id, dense } = cand;
+    const { id, dense, pitBoxNode } = cand;
     const N = dense.length;
     const cumDist = new Float64Array(N);
     cumDist[0] = 0;
@@ -997,9 +1001,32 @@ export function computePitStopZones(
     const totalL = cumDist[N - 1];
     if (totalL < 8) continue;
 
-    const mid = totalL * 0.5;
-    const startD = Math.max(0, mid - 25);
-    const endD = Math.min(totalL, mid + 25);
+    let mid = totalL * 0.5;
+    if (pitBoxNode) {
+      let bestIdx = 0;
+      let bestSq = Infinity;
+      for (let k = 0; k < N; k++) {
+        const dx = dense[k].x - pitBoxNode.x;
+        const dy = dense[k].y - pitBoxNode.y;
+        const dSq = dx * dx + dy * dy;
+        if (dSq < bestSq) {
+          bestSq = dSq;
+          bestIdx = k;
+        }
+      }
+      mid = cumDist[bestIdx];
+    }
+
+    const desiredLen = Math.min(50, totalL);
+    let startD = mid - desiredLen * 0.5;
+    let endD = mid + desiredLen * 0.5;
+    if (startD < 0) {
+      startD = 0;
+      endD = desiredLen;
+    } else if (endD > totalL) {
+      endD = totalL;
+      startD = Math.max(0, totalL - desiredLen);
+    }
     const zoneLen = endD - startD;
     if (zoneLen < 4) continue;
 

@@ -1800,6 +1800,113 @@ export const Track3D: React.FC<Track3DProps> = ({
     return geo;
   }, [branches, pitSpline]);
 
+  const pitTimingLineTex = useMemo(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      const cols = 16;
+      const rows = 2;
+      const cw = canvas.width / cols;
+      const rh = canvas.height / rows;
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          ctx.fillStyle = (r + c) % 2 === 0 ? '#ffffff' : '#111827';
+          ctx.fillRect(c * cw, r * rh, cw, rh);
+        }
+      }
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.anisotropy = 4;
+    tex.needsUpdate = true;
+    return tex;
+  }, []);
+
+  const pitTimingLineGeo = useMemo(() => {
+    const startF = geometries?.frames?.[0];
+    if (!startF) return null;
+    const tanLen = Math.hypot(startF.tangent.x, startF.tangent.z);
+    if (tanLen < 1e-6) return null;
+    const stx = startF.tangent.x / tanLen;
+    const stz = startF.tangent.z / tanLen;
+
+    const candidatePaths: SplineNode[][] = [];
+    if (branches && branches.length > 0) {
+      for (const b of branches) {
+        if (!b.points || b.points.length < 2) continue;
+        const dense = computeSpline(b.points, false);
+        if (dense.length >= 2) candidatePaths.push(dense);
+      }
+    } else if (pitSpline && pitSpline.length >= 2) {
+      candidatePaths.push(pitSpline);
+    }
+    if (candidatePaths.length === 0) return null;
+
+    const verts: number[] = [];
+    const uvs: number[] = [];
+    const indices: number[] = [];
+
+    for (const dense of candidatePaths) {
+      const M = dense.length;
+      const cumS = new Float64Array(M);
+      for (let i = 1; i < M; i++) {
+        cumS[i] = cumS[i - 1] + Math.hypot(dense[i].x - dense[i - 1].x, dense[i].y - dense[i - 1].y);
+      }
+
+      let bestCross: { sCross: number; lat: number } | null = null;
+      for (let k = 0; k < M - 1; k++) {
+        const pA = dense[k];
+        const pB = dense[k + 1];
+        const dA = (pA.x - startF.pos.x) * stx + (pA.y - startF.pos.z) * stz;
+        const dB = (pB.x - startF.pos.x) * stx + (pB.y - startF.pos.z) * stz;
+        if (!((dA <= 0 && dB >= 0) || (dA >= 0 && dB <= 0))) continue;
+
+        const denom = dB - dA;
+        const u = Math.abs(denom) < 1e-6 ? 0.5 : Math.max(0, Math.min(1, -dA / denom));
+        const cx = pA.x + u * (pB.x - pA.x);
+        const cz = pA.y + u * (pB.y - pA.y);
+        const cy = (pA.z ?? 0) + u * ((pB.z ?? 0) - (pA.z ?? 0));
+        const lat = Math.hypot(cx - startF.pos.x, cz - startF.pos.z);
+
+        if (lat > startF.cross.halfWidth + 2.0 && lat < 90.0 && Math.abs(cy - startF.pos.y) < 12.0) {
+          const sCross = cumS[k] + u * (cumS[k + 1] - cumS[k]);
+          if (!bestCross || lat < bestCross.lat) {
+            bestCross = { sCross, lat };
+          }
+        }
+      }
+
+      if (bestCross) {
+        const branchSampler = buildSplineArcSampler(dense, false);
+        if (branchSampler.totalLen >= 2) {
+          const sp = branchSampler.sampleAt(bestCross.sCross);
+          const hw = (sp.width || 10) * 0.5;
+          pushConformedStrip(
+            verts,
+            uvs,
+            indices,
+            branchSampler,
+            Math.max(0, bestCross.sCross - 0.8),
+            Math.min(branchSampler.totalLen, bestCross.sCross + 0.8),
+            hw,
+            -hw,
+            0.062,
+            2
+          );
+        }
+      }
+    }
+
+    if (indices.length === 0) return null;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+    return geo;
+  }, [geometries?.frames, branches, pitSpline]);
+
   const fusedNetwork = useMemo(() => {
     const hasBranches = branches && branches.length > 0;
     const hasPit = pitSpline && pitSpline.length >= 2;
@@ -2178,6 +2285,8 @@ function disposeGeometriesIn(obj: object | null | undefined) {
   }, [pitApproachDecals]);
   useEffect(() => () => { pitStopTex.dispose(); }, [pitStopTex]);
   useEffect(() => () => { pitStopZoneGeo?.dispose(); }, [pitStopZoneGeo]);
+  useEffect(() => () => { pitTimingLineTex.dispose(); }, [pitTimingLineTex]);
+  useEffect(() => () => { pitTimingLineGeo?.dispose(); }, [pitTimingLineGeo]);
 
 
   return (
@@ -2250,7 +2359,7 @@ function disposeGeometriesIn(obj: object | null | undefined) {
         </TrimeshColliderWrap>
       )}
 
-      {/* Zona Amarela de Reparação / Pit Stop (50m centrada no ponto médio da Box) */}
+      {/* Zona Amarela de Reparação / Pit Stop (50m centrada no nó marcado ou ponto médio da Box) */}
       {pitStopZoneGeo && (
         <mesh geometry={pitStopZoneGeo} receiveShadow>
           <meshStandardMaterial
@@ -2260,6 +2369,21 @@ function disposeGeometriesIn(obj: object | null | undefined) {
             depthWrite={false}
             polygonOffset
             polygonOffsetFactor={-2}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+      )}
+
+      {/* Linha de Meta / Cronometragem alinhada na Box com o Ponto #1 */}
+      {pitTimingLineGeo && (
+        <mesh geometry={pitTimingLineGeo} renderOrder={2}>
+          <meshStandardMaterial
+            map={pitTimingLineTex}
+            roughness={0.55}
+            depthWrite={false}
+            polygonOffset
+            polygonOffsetFactor={-3}
+            polygonOffsetUnits={-3}
             side={THREE.DoubleSide}
           />
         </mesh>
@@ -2794,7 +2918,7 @@ function disposeGeometriesIn(obj: object | null | undefined) {
                 const seqNum = nextSeqNum++;
                 const isSelected = selectedBranchNode?.branchId === branch.id && selectedBranchNode?.nodeIndex === bpIdx;
                 const bpZ = bp.z ?? 0;
-                const nodeColor = isSelected ? '#00f3ff' : (bp.isTunnel ? '#a855f7' : '#f59e0b');
+                const nodeColor = isSelected ? '#00f3ff' : (bp.isPitBox ? '#10b981' : (bp.isTunnel ? '#a855f7' : '#f59e0b'));
                 return (
                   <group
                     key={`branch_${branch.id}_${bpIdx}`}
@@ -2864,7 +2988,7 @@ function disposeGeometriesIn(obj: object | null | undefined) {
                     {Math.abs(bpZ) > 0.3 && (
                       <mesh position={[0, -bpZ / 2, 0]}>
                         <cylinderGeometry args={[0.25, 0.25, Math.abs(bpZ), 8]} />
-                        <meshBasicMaterial color={isSelected ? '#00f3ff' : (bp.isTunnel ? '#a855f7' : '#f59e0b')} transparent opacity={0.65} />
+                        <meshBasicMaterial color={nodeColor} transparent opacity={0.65} />
                       </mesh>
                     )}
                   </group>
