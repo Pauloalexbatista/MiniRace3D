@@ -58,7 +58,8 @@ import {
   Trash2,
   RotateCcw,
   Undo2,
-  Home
+  Home,
+  Lightbulb
 } from 'lucide-react';
 
 export interface TrackEditorModeProps {
@@ -143,6 +144,8 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
   const [resetTrigger, setResetTrigger] = useState(0);
   const [raceStartTrigger, setRaceStartTrigger] = useState(0);
   const [recoverTrigger, setRecoverTrigger] = useState(0);
+  const [headlightsOn, setHeadlightsOn] = useState<boolean>(true);
+  const handleToggleHeadlights = () => setHeadlightsOn((prev) => !prev);
   const [trackThemeId, setTrackThemeId] = useState<TrackThemeId>('f1_modern');
 
   // Visual settings
@@ -287,6 +290,10 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
 
       if ((e.code === 'Delete' || e.code === 'Backspace') && (selectedPointIndex !== null || selectedBranchNode !== null) && !isInput) {
         handleDeleteSelectedPoint();
+      }
+
+      if (e.code === 'KeyL' && !e.repeat && !isInput) {
+        setHeadlightsOn((prev) => !prev);
       }
 
       if (e.code === 'KeyE' && !isInput) {
@@ -764,6 +771,126 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
     setShowMapModal(false);
     showToast('🖼️ Imagem de fundo atualizada! A tua pista atual foi mantida.');
     setTimeout(() => showToast(null), 3500);
+  };
+
+  const rasterizeToPngDataUrl = (url: string, baseName: string, wHint?: number, hHint?: number): Promise<{ dataUrl: string; fileName: string }> =>
+    new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const natW = img.naturalWidth || img.width || wHint || 1600;
+          const natH = img.naturalHeight || img.height || hHint || 1600;
+          const maxDim = 2048;
+          const scale = Math.min(1, maxDim / Math.max(natW, natH));
+          const cw = Math.max(1, Math.round(natW * scale));
+          const ch = Math.max(1, Math.round(natH * scale));
+          const canvas = document.createElement('canvas');
+          canvas.width = cw;
+          canvas.height = ch;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) throw new Error('Canvas 2D context unavailable');
+          ctx.drawImage(img, 0, 0, cw, ch);
+          const pngUrl = canvas.toDataURL('image/png');
+          const cleanName = baseName.replace(/\.[^/.]+$/, '') + '.png';
+          resolve({ dataUrl: pngUrl, fileName: cleanName });
+        } catch (err) {
+          reject(err);
+        }
+      };
+      img.onerror = () => reject(new Error('Failed to decode image'));
+      img.src = url;
+    });
+
+  const rasterizeSvgText = async (svgText: string, baseName: string): Promise<{ dataUrl: string; fileName: string }> => {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(svgText, 'image/svg+xml');
+    const svgEl = doc.querySelector('svg');
+    if (!svgEl) {
+      throw new Error('SVG inválido');
+    }
+    if (!svgEl.getAttribute('xmlns')) {
+      svgEl.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    }
+    const rawW = svgEl.getAttribute('width') || '';
+    const rawH = svgEl.getAttribute('height') || '';
+    let w = parseFloat(rawW);
+    let h = parseFloat(rawH);
+    const hasNumericSize =
+      Number.isFinite(w) && w > 0 && !rawW.includes('%') &&
+      Number.isFinite(h) && h > 0 && !rawH.includes('%');
+    if (!hasNumericSize) {
+      const vb = (svgEl.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number);
+      if (vb.length === 4 && Number.isFinite(vb[2]) && vb[2] > 0 && Number.isFinite(vb[3]) && vb[3] > 0) {
+        w = vb[2];
+        h = vb[3];
+      } else {
+        w = 1600;
+        h = 1600;
+      }
+    }
+    const maxDim = 2048;
+    const maxSide = Math.max(w, h);
+    const scale = maxSide > maxDim || maxSide < 1024 ? maxDim / maxSide : 1;
+    const targetW = Math.max(1, Math.round(w * scale));
+    const targetH = Math.max(1, Math.round(h * scale));
+    svgEl.setAttribute('width', String(targetW));
+    svgEl.setAttribute('height', String(targetH));
+    const serialized = new XMLSerializer().serializeToString(svgEl);
+    const blob = new Blob([serialized], { type: 'image/svg+xml;charset=utf-8' });
+    const objUrl = URL.createObjectURL(blob);
+    try {
+      return await rasterizeToPngDataUrl(objUrl, baseName, targetW, targetH);
+    } finally {
+      URL.revokeObjectURL(objUrl);
+    }
+  };
+
+  const prepareUploadedMapDataUrl = async (file: File): Promise<{ dataUrl: string; fileName: string } | null> => {
+    const lowerName = file.name.toLowerCase();
+    const mime = (file.type || '').toLowerCase();
+
+    if (lowerName.endsWith('.html') || lowerName.endsWith('.htm') || mime === 'text/html') {
+      const txt = await file.text();
+      const svgMatch = txt.match(/<svg[\s\S]*?<\/svg>/i);
+      if (svgMatch) {
+        return await rasterizeSvgText(svgMatch[0], file.name);
+      }
+      showToast("⚠️ Esse ficheiro é uma página HTML (não uma imagem). Abre-o no browser, clica direito na imagem do circuito e escolhe 'Guardar imagem como...' (PNG/JPG/SVG).");
+      return null;
+    }
+
+    if (lowerName.endsWith('.svg') || mime === 'image/svg+xml') {
+      const svgTxt = await file.text();
+      return await rasterizeSvgText(svgTxt, file.name);
+    }
+
+    if (
+      lowerName.endsWith('.avif') ||
+      lowerName.endsWith('.bmp') ||
+      lowerName.endsWith('.gif') ||
+      mime === 'image/avif' ||
+      mime === 'image/bmp' ||
+      mime === 'image/gif'
+    ) {
+      const objUrl = URL.createObjectURL(file);
+      try {
+        return await rasterizeToPngDataUrl(objUrl, file.name);
+      } finally {
+        URL.revokeObjectURL(objUrl);
+      }
+    }
+
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const res = ev.target?.result;
+        if (typeof res === 'string') resolve(res);
+        else reject(new Error('Failed to read file'));
+      };
+      reader.onerror = () => reject(new Error('Failed to read file'));
+      reader.readAsDataURL(file);
+    });
+    return { dataUrl, fileName: file.name };
   };
 
   const handleSelectReferenceMap = (url: string) => {
@@ -1346,7 +1473,7 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
           sprayRadius={sprayRadius}
         />
 
-        <Physics gravity={[0, -24, 0]} timeStep="vary">
+        <Physics gravity={[0, -24, 0]} timeStep={1 / 60} interpolate={true}>
           {/* Chão sólido infinito de segurança */}
           <RigidBody type="fixed" friction={0.05} restitution={0.05}>
             <CuboidCollider args={[10000, 1, 10000]} position={[0, safetyFloorY - 1.0, 0]} />
@@ -1546,6 +1673,9 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
             speedPreset={speedPreset}
             carClass={carClass}
             carTuning={carTuning}
+            headlightsOn={headlightsOn}
+            onToggleHeadlights={handleToggleHeadlights}
+            environmentTheme={theme}
             resetTrigger={resetTrigger}
             raceStartTrigger={raceStartTrigger}
             recoverTrigger={recoverTrigger}
@@ -1577,6 +1707,8 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
         onChangeCameraMode={(m) => setCameraMode(m)}
         onChangeSpeedPreset={(p) => setSpeedPreset(p)}
         onResetCar={() => setRecoverTrigger(prev => prev + 1)}
+        headlightsOn={headlightsOn}
+        onToggleHeadlights={handleToggleHeadlights}
       />
 
       {/* ======================================================== */}
@@ -1863,6 +1995,26 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
           >
             <RotateCcw size={13} />
             <span>Reiniciar</span>
+          </button>
+          <button
+            onClick={handleToggleHeadlights}
+            title="Ligar/Desligar faróis dianteiros (Tecla L)"
+            style={{
+              padding: '6px 10px',
+              borderRadius: 7,
+              fontSize: 11,
+              fontWeight: 800,
+              cursor: 'pointer',
+              border: headlightsOn ? '1px solid rgba(250, 204, 21, 0.55)' : '1px solid rgba(148, 163, 184, 0.35)',
+              background: headlightsOn ? 'rgba(250, 204, 21, 0.18)' : 'rgba(30, 41, 59, 0.7)',
+              color: headlightsOn ? '#fde047' : '#94a3b8',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5
+            }}
+          >
+            <Lightbulb size={13} />
+            <span>{headlightsOn ? 'Faróis (L)' : 'Faróis OFF (L)'}</span>
           </button>
         </div>
 
@@ -2369,32 +2521,31 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
               </label>
               <input
                 type="file"
-                accept="image/*"
-                onChange={(e) => {
+                accept="image/*,.svg,.webp,.avif,.png,.jpg,.jpeg,.gif,.bmp,.jfif,.html,.htm"
+                onChange={async (e) => {
                   const file = e.target.files?.[0];
-                  if (file) {
-                    const reader = new FileReader();
-                    reader.onload = async (ev) => {
-                      const res = ev.target?.result as string;
-                      if (res) {
-                        try {
-                          const uploadRes = await fetch('/api/upload-map', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ dataUrl: res, fileName: file.name })
-                          });
-                          if (uploadRes.ok) {
-                            const data = await uploadRes.json();
-                            if (data.url) {
-                              handleSelectReferenceMap(data.url);
-                              return;
-                            }
-                          }
-                        } catch {}
-                        handleSelectReferenceMap(res);
+                  e.target.value = '';
+                  if (!file) return;
+                  try {
+                    const prepared = await prepareUploadedMapDataUrl(file);
+                    if (!prepared) return;
+                    try {
+                      const uploadRes = await fetch('/api/upload-map', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ dataUrl: prepared.dataUrl, fileName: prepared.fileName })
+                      });
+                      if (uploadRes.ok) {
+                        const data = await uploadRes.json();
+                        if (data.url) {
+                          handleSelectReferenceMap(data.url);
+                          return;
+                        }
                       }
-                    };
-                    reader.readAsDataURL(file);
+                    } catch {}
+                    handleSelectReferenceMap(prepared.dataUrl);
+                  } catch {
+                    showToast('⚠️ Não foi possível carregar esse ficheiro como imagem.');
                   }
                 }}
                 style={{

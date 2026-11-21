@@ -1,8 +1,9 @@
 import React, { useRef, useEffect, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { RigidBody, CuboidCollider, useRapier, RapierRigidBody, CollisionEnterPayload } from '@react-three/rapier';
+import { RigidBody, CuboidCollider, useRapier, useBeforePhysicsStep, RapierRigidBody, CollisionEnterPayload } from '@react-three/rapier';
 import { SplineNode, RoadBranch, computePitStopZones, buildSplineArcSampler, computeGridSlotPose } from '../tracks';
+import { bermaWidth } from '../trackCorridor';
 import { SurfaceType, SpeedPreset } from '../physics';
 import { Car3D, CarClass } from './Car3D';
 import { publishTelemetry, TelemetryData, PitStopStatus, RaceStartPhase, registerStartCountdownHandler } from '../telemetryStore';
@@ -153,6 +154,9 @@ interface RapierCarControllerProps {
   speedPreset?: SpeedPreset;
   carClass?: CarClass;
   carTuning?: CarTuning;
+  headlightsOn?: boolean;
+  onToggleHeadlights?: () => void;
+  environmentTheme?: 'day' | 'sunset' | 'night';
   onTelemetry?: (data: TelemetryData) => void;
   resetTrigger?: number;
   raceStartTrigger?: number;
@@ -187,6 +191,9 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
   speedPreset = 'sport',
   carClass = 'f1',
   carTuning,
+  headlightsOn = true,
+  onToggleHeadlights,
+  environmentTheme = 'day',
   onTelemetry,
   resetTrigger = 0,
   raceStartTrigger = 0,
@@ -219,11 +226,16 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
   onSceneReadyRef.current = onSceneReady;
   const onLocalCarSampleRef = useRef(onLocalCarSample);
   onLocalCarSampleRef.current = onLocalCarSample;
+  const headlightsOnRef = useRef(headlightsOn);
+  headlightsOnRef.current = headlightsOn;
+  const onToggleHeadlightsRef = useRef(onToggleHeadlights);
+  onToggleHeadlightsRef.current = onToggleHeadlights;
 
   const keys = useRef<{ [key: string]: boolean }>({});
   const steerRef = useRef(0);
   const visualSteerRef = useRef(0);
   const wheelRollRef = useRef(0);
+  const brakeLightRef = useRef(0);
   const camPosRef = useRef(new THREE.Vector3());
   const camLookRef = useRef(new THREE.Vector3());
   const telemetryAccRef = useRef(0);
@@ -255,7 +267,10 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
   const flippedSecRef = useRef(0);
   const lastPublishedPhaseRef = useRef<RaceStartPhase>('ready');
   const lastPublishedLightsRef = useRef(0);
+  const lastPublishedHeadlightsRef = useRef(headlightsOn);
+  const lastPublishedBrakingRef = useRef(false);
   const gpRecoverCooldownRef = useRef(0);
+  const gpLightsCooldownRef = useRef(0);
   const audioCtxRef = useRef<AudioContext | null>(null);
 
   const engineHealthRef = useRef(100);
@@ -268,6 +283,24 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
   const prevSpeedKmhRef = useRef(0);
   const pitStopTimerRef = useRef(0);
   const pitStopDoneUntilRef = useRef(0);
+
+  // Bridge refs between fixed-timestep useBeforePhysicsStep and render-frame useFrame
+  const lastGroundedWheelsRef = useRef(0);
+  const lastSumHitToiRef = useRef(0);
+  const lastForwardSpeedRef = useRef(0);
+  const lastLateralSpeedRef = useRef(0);
+  const lastSpeedKmhRef = useRef(0);
+  const lastCurrentSurfaceRef = useRef<SurfaceType>('TRACK');
+  const lastCurrentTierRef = useRef(0);
+  const lastThrottleRef = useRef(0);
+  const lastBrakeRef = useRef(0);
+  const lastHandbrakeRef = useRef(false);
+  const lastInPitBoxZoneRef = useRef(false);
+  const lastPitStopStatusRef = useRef<PitStopStatus>('none');
+  const lastIsFlippedRef = useRef(false);
+  const lastIsHeldOnGridRef = useRef(true);
+  const forceNetEmitRef = useRef(false);
+  const physicsSteppedRef = useRef(false);
 
   // Pooled GPU-fading skid mark ring buffer (1 draw call, zero per-frame allocations)
   const skidClockRef = useRef(0);
@@ -474,6 +507,18 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
     return Number.isFinite(m) ? m : 0;
   }, [spline]);
 
+  const localFloorCheckRadiusSq = useMemo(() => {
+    let maxR = 30;
+    if (spline && spline.length > 0) {
+      for (const n of spline) {
+        const hw = (n.width || 18) * 0.5;
+        const reach = hw + Math.max(bermaWidth(n, 'L'), bermaWidth(n, 'R')) + 8;
+        if (reach > maxR) maxR = reach;
+      }
+    }
+    return maxR * maxR;
+  }, [spline]);
+
   const resetToGridStart = (resetStats = true) => {
     const rb = rbRef.current;
     if (!rb) return;
@@ -500,6 +545,11 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
     rb.setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }, true);
     rb.setLinvel({ x: 0, y: 0, z: 0 }, true);
     rb.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    const bodyObj = visualGroupRef.current?.parent;
+    if (bodyObj) {
+      bodyObj.position.set(spawnPose.pos[0], targetY, spawnPose.pos[2]);
+      bodyObj.quaternion.copy(q);
+    }
     if (visualGroupRef.current) {
       const tireBottom = carClass === 'f1' ? -0.06 : -0.02;
       visualGroupRef.current.position.y = -eqRideY - tireBottom + 0.005;
@@ -576,6 +626,11 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
     rb.setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }, true);
     rb.setLinvel({ x: 0, y: 0, z: 0 }, true);
     rb.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    const bodyObj = visualGroupRef.current?.parent;
+    if (bodyObj) {
+      bodyObj.position.set(sp.x, targetY, sp.z);
+      bodyObj.quaternion.copy(q);
+    }
 
     if (mainArcSampler.totalLen > 20) {
       const L = mainArcSampler.totalLen;
@@ -620,7 +675,8 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
         if (e.repeat) return;
         const isModifier =
           k === 'shift' || k === 'control' || k === 'alt' || k === 'meta' ||
-          k === 'tab' || k === 'escape' || k === 'capslock' || /^f\d+$/.test(k);
+          k === 'tab' || k === 'escape' || k === 'capslock' ||
+          k === 'l' || k === 'c' || /^f\d+$/.test(k);
         if (isModifier) return;
         if (k === 'r' && e.shiftKey) {
           resetToGridStart(true);
@@ -679,6 +735,9 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
   const tmpDesiredCam = useMemo(() => new THREE.Vector3(), []);
   const tmpLookTarget = useMemo(() => new THREE.Vector3(), []);
   const tmpLookUpOffset = useMemo(() => new THREE.Vector3(0, 1.5, 0), []);
+  const tmpCamCarPos = useMemo(() => new THREE.Vector3(), []);
+  const tmpCamCarQuat = useMemo(() => new THREE.Quaternion(), []);
+  const tmpCamForward = useMemo(() => new THREE.Vector3(), []);
   const tmpWheelRays = useMemo(
     () => WHEEL_MOUNTS.map(() => new rapier.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 })),
     [rapier]
@@ -728,11 +787,11 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
     }
   };
 
-  useFrame((state, delta) => {
+  useBeforePhysicsStep(() => {
     const rb = rbRef.current;
     if (!rb) return;
 
-    const dt = Math.min(delta, 0.033);
+    const dt = 1 / 60;
     const t = rb.translation();
     const r = rb.rotation();
     const lv = rb.linvel();
@@ -861,6 +920,11 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
 
         gpHandbrake = Boolean(gp.buttons[2]?.pressed || gp.buttons[5]?.pressed);
 
+        if (gp.buttons[4]?.pressed && nowMs > gpLightsCooldownRef.current) {
+          gpLightsCooldownRef.current = nowMs + 350;
+          onToggleHeadlightsRef.current?.();
+        }
+
         if (!externalRaceControlRef.current && isRaceActiveRef.current && raceStartPhaseRef.current === 'ready') {
           if (gpThrottle > 0.25 || gp.buttons[0]?.pressed || gp.buttons[9]?.pressed) {
             beginStartCountdown();
@@ -890,6 +954,13 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
         : 0
       : Math.max(kbBrake, gpBrake);
     const handbrake = isHeldOnGrid || isAutoCoastStop ? false : (kbHandbrake || gpHandbrake);
+    const brakeLightVal = Math.max(
+      kbBrake,
+      gpBrake,
+      kbHandbrake || gpHandbrake ? 1 : 0,
+      isAutoCoastStop && brake > 0.05 ? brake : 0
+    );
+    brakeLightRef.current = brakeLightVal;
     const rawSteer = isHeldOnGrid || isAutoCoastStop ? 0 : (Math.abs(gpSteer) > 0.01 ? gpSteer : (kbLeft - kbRight));
     steerRef.current = THREE.MathUtils.lerp(steerRef.current, rawSteer, Math.min(1, dt * 10));
     visualSteerRef.current = steerRef.current * 0.42;
@@ -909,7 +980,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
           bestSq = dSq;
           bestIdx = idx;
         }
-        if (dSq < 900) {
+        if (dSq < localFloorCheckRadiusSq) {
           const sy = sn.z ?? 0;
           if (sy < localRoadMinY) localRoadMinY = sy;
         }
@@ -922,7 +993,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
             bestSq = dSq;
             bestIdx = i;
           }
-          if (dSq < 900) {
+          if (dSq < localFloorCheckRadiusSq) {
             const sy = sn.z ?? 0;
             if (sy < localRoadMinY) localRoadMinY = sy;
           }
@@ -1010,7 +1081,10 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
 
         const velAlongUp = tmpPointVel.dot(tmpUp);
         const bumpStopForce = hitToi < 0.85 ? (0.85 - hitToi) * springStiffness * 3.5 : 0;
-        const springForce = Math.max(0, compression * springStiffness + bumpStopForce - velAlongUp * springDamper);
+        const rawSpring = compression * springStiffness + bumpStopForce;
+        const maxDampMag = (Math.abs(velAlongUp) / dt) * (mass * 0.25);
+        const dampForce = Math.max(-maxDampMag, Math.min(maxDampMag, velAlongUp * springDamper));
+        const springForce = Math.max(0, Math.min(mass * 160, rawSpring - dampForce));
 
         const impulseScale = springForce * dt;
         rb.applyImpulseAtPoint(
@@ -1054,109 +1128,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
     const forwardSpeed = tmpVel.dot(tmpForward);
     const lateralSpeed = tmpVel.dot(tmpRight);
     const speedKmh = Math.abs(forwardSpeed) * 3.6;
-
-    // Advance GPU skid-mark shader clock & emit drift / brake / wheelspin marks
-    skidClockRef.current += dt;
-    const skidNow = skidClockRef.current;
-    skidResources.mat.uniforms.uTime.value = skidNow;
-
-    let skidDirty = false;
-    const skidHalfW = carClass === 'f1' ? 0.24 : 0.165;
     const absLat = Math.abs(lateralSpeed);
-    const isBaldSpin = !isHeldOnGrid && tireHealthRef.current < 38 && throttle > 0.65 && speedKmh > 20;
-    const isHeavyBrake = !isHeldOnGrid && brake > 0.65 && forwardSpeed > 12;
-
-    for (let i = 0; i < WHEEL_MOUNTS.length; i++) {
-      const wh = wheelHitData[i];
-      const prev = prevWheelPosRef[i];
-      if (isHeldOnGrid || !wh.grounded || speedKmh <= 10) {
-        prev.valid = false;
-        continue;
-      }
-
-      const isRear = i >= 2;
-      let rawAlpha = 0;
-      if (isRear) {
-        if (absLat > 4.0) rawAlpha = Math.max(rawAlpha, Math.min(0.68, (absLat - 4.0) * 0.10 + 0.18));
-        if (handbrake && speedKmh > 12) rawAlpha = Math.max(rawAlpha, 0.62);
-        if (isHeavyBrake) rawAlpha = Math.max(rawAlpha, 0.45 * brake);
-        if (isBaldSpin) rawAlpha = Math.max(rawAlpha, 0.36);
-      } else {
-        if (isHeavyBrake && speedKmh > 55) rawAlpha = Math.max(rawAlpha, 0.38 * brake);
-        if (absLat > 7.5) rawAlpha = Math.max(rawAlpha, Math.min(0.50, (absLat - 7.5) * 0.08 + 0.15));
-      }
-
-      if (currentTier >= 4) rawAlpha = Math.min(rawAlpha, 0.42);
-      if (rawAlpha <= 0.05) {
-        prev.valid = false;
-        continue;
-      }
-
-      const hx = wh.hx;
-      const hy = wh.hy + 0.05;
-      const hz = wh.hz;
-      if (!prev.valid) {
-        prev.valid = true;
-        prev.x = hx;
-        prev.y = hy;
-        prev.z = hz;
-        continue;
-      }
-
-      const dx = hx - prev.x;
-      const dz = hz - prev.z;
-      const dist = Math.hypot(dx, dz);
-      if (dist > 5.5) {
-        prev.x = hx;
-        prev.y = hy;
-        prev.z = hz;
-      } else if (dist >= 0.75) {
-        const px = (-dz / dist) * skidHalfW;
-        const pz = (dx / dist) * skidHalfW;
-        const slot = skidHeadRef.current;
-        const vBase = slot * 4;
-        const pBase = vBase * 3;
-        const posArr = skidResources.positions;
-
-        posArr[pBase] = prev.x - px;
-        posArr[pBase + 1] = prev.y;
-        posArr[pBase + 2] = prev.z - pz;
-
-        posArr[pBase + 3] = prev.x + px;
-        posArr[pBase + 4] = prev.y;
-        posArr[pBase + 5] = prev.z + pz;
-
-        posArr[pBase + 6] = hx - px;
-        posArr[pBase + 7] = hy;
-        posArr[pBase + 8] = hz - pz;
-
-        posArr[pBase + 9] = hx + px;
-        posArr[pBase + 10] = hy;
-        posArr[pBase + 11] = hz + pz;
-
-        skidResources.birthTimes[vBase] = skidNow;
-        skidResources.birthTimes[vBase + 1] = skidNow;
-        skidResources.birthTimes[vBase + 2] = skidNow;
-        skidResources.birthTimes[vBase + 3] = skidNow;
-
-        skidResources.alphas[vBase] = rawAlpha;
-        skidResources.alphas[vBase + 1] = rawAlpha;
-        skidResources.alphas[vBase + 2] = rawAlpha;
-        skidResources.alphas[vBase + 3] = rawAlpha;
-
-        skidHeadRef.current = (slot + 1) % SKID_MAX_QUADS;
-        prev.x = hx;
-        prev.y = hy;
-        prev.z = hz;
-        skidDirty = true;
-      }
-    }
-
-    if (skidDirty) {
-      skidResources.posAttr.needsUpdate = true;
-      skidResources.birthAttr.needsUpdate = true;
-      skidResources.alphaAttr.needsUpdate = true;
-    }
 
     // Backup sudden-deceleration impact check (e.g. heavy wall scrape without CollisionEnter)
     const speedDrop = prevSpeedKmhRef.current - speedKmh;
@@ -1329,46 +1301,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
       );
     }
 
-    // Visual wheel spin + lock tire bottom flush with detected road surface
-    wheelRollRef.current += forwardSpeed * dt * 1.5;
-    if (visualGroupRef.current) {
-      const tireBottom = carClass === 'f1' ? -0.06 : -0.02;
-      if (groundedWheels > 0) {
-        const avgToi = sumHitToi / groundedWheels;
-        const groundLocalY = WHEEL_RAY_ORIGIN_Y - avgToi;
-        const targetVisY = groundLocalY - tireBottom + 0.005;
-        visualGroupRef.current.position.y = THREE.MathUtils.lerp(visualGroupRef.current.position.y, targetVisY, 0.65);
-      } else {
-        visualGroupRef.current.position.y = THREE.MathUtils.lerp(visualGroupRef.current.position.y, 0.05, 0.15);
-      }
-    }
-
-    // Camera tracking (frame-rate-independent exponential damping, zero allocations)
-    if (cameraMode === 'chase') {
-      tmpCamOffset.set(0, 5.2, -13.0).applyQuaternion(tmpQuat);
-      tmpDesiredCam.copy(tmpPos).add(tmpCamOffset);
-      if (camPosRef.current.lengthSq() === 0) camPosRef.current.copy(tmpDesiredCam);
-      const camAlpha = 1 - Math.exp(-9 * dt);
-      camPosRef.current.lerp(tmpDesiredCam, camAlpha);
-
-      tmpLookTarget.copy(tmpPos).addScaledVector(tmpForward, 8).add(tmpLookUpOffset);
-      if (camLookRef.current.lengthSq() === 0) camLookRef.current.copy(tmpLookTarget);
-      const lookAlpha = 1 - Math.exp(-12 * dt);
-      camLookRef.current.lerp(tmpLookTarget, lookAlpha);
-
-      state.camera.position.copy(camPosRef.current);
-      state.camera.lookAt(camLookRef.current);
-    } else if (cameraMode === 'cockpit') {
-      tmpCamOffset.set(0, 1.55, 0.35).applyQuaternion(tmpQuat);
-      tmpDesiredCam.copy(tmpPos).add(tmpCamOffset);
-      tmpCamOffset.set(0, 1.35, 18).applyQuaternion(tmpQuat);
-      tmpLookTarget.copy(tmpPos).add(tmpCamOffset);
-      state.camera.position.copy(tmpDesiredCam);
-      state.camera.lookAt(tmpLookTarget);
-    }
-
     // Lap timing & unwrapped distance progress (counts main straight AND Pit-Box lane crossings!)
-    let forceNetEmit = false;
     if (!isHeldOnGrid && spline && spline.length >= 6) {
       const L = mainArcSampler.totalLen;
       let crossedStartByS = false;
@@ -1425,7 +1358,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
             lapNumberRef.current += 1;
             lapStartRef.current = now;
           }
-          forceNetEmit = true;
+          forceNetEmitRef.current = true;
         }
       }
       wasAtStartRef.current = nearStart;
@@ -1484,14 +1417,220 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
       flippedSecRef.current = 0;
     }
     const isFlippedNow = flippedSecRef.current >= 0.45;
-    const recoveryNoticeActive = nowMs < recoveryNoticeUntilRef.current;
-
     prevSpeedKmhRef.current = speedKmh;
 
+    lastGroundedWheelsRef.current = groundedWheels;
+    lastSumHitToiRef.current = sumHitToi;
+    lastForwardSpeedRef.current = forwardSpeed;
+    lastLateralSpeedRef.current = lateralSpeed;
+    lastSpeedKmhRef.current = speedKmh;
+    lastCurrentSurfaceRef.current = currentSurface;
+    lastCurrentTierRef.current = currentTier;
+    lastThrottleRef.current = throttle;
+    lastBrakeRef.current = brake;
+    lastHandbrakeRef.current = handbrake;
+    lastInPitBoxZoneRef.current = inPitBoxZone;
+    lastPitStopStatusRef.current = pitStopStatus;
+    lastIsFlippedRef.current = isFlippedNow;
+    lastIsHeldOnGridRef.current = isHeldOnGrid;
+    physicsSteppedRef.current = true;
+  });
+
+  useFrame((state, delta) => {
+    const rb = rbRef.current;
+    if (!rb) return;
+
+    const visDt = Math.min(delta, 0.05);
+    const nowMs = performance.now();
+
+    const groundedWheels = lastGroundedWheelsRef.current;
+    const sumHitToi = lastSumHitToiRef.current;
+    const forwardSpeed = lastForwardSpeedRef.current;
+    const lateralSpeed = lastLateralSpeedRef.current;
+    const speedKmh = lastSpeedKmhRef.current;
+    const currentSurface = lastCurrentSurfaceRef.current;
+    const currentTier = lastCurrentTierRef.current;
+    const throttle = lastThrottleRef.current;
+    const brake = lastBrakeRef.current;
+    const handbrake = lastHandbrakeRef.current;
+    const inPitBoxZone = lastInPitBoxZoneRef.current;
+    const pitStopStatus = lastPitStopStatusRef.current;
+    const isFlippedNow = lastIsFlippedRef.current;
+    const isHeldOnGrid = lastIsHeldOnGridRef.current;
+    const recoveryNoticeActive = nowMs < recoveryNoticeUntilRef.current;
+
+    // Visual wheel spin + lock tire bottom flush with detected road surface
+    wheelRollRef.current += forwardSpeed * visDt * 1.5;
+    if (visualGroupRef.current) {
+      const tireBottom = carClass === 'f1' ? -0.06 : -0.02;
+      if (groundedWheels > 0) {
+        const avgToi = sumHitToi / groundedWheels;
+        const groundLocalY = WHEEL_RAY_ORIGIN_Y - avgToi;
+        const targetVisY = groundLocalY - tireBottom + 0.005;
+        visualGroupRef.current.position.y = THREE.MathUtils.lerp(visualGroupRef.current.position.y, targetVisY, 0.65);
+      } else {
+        visualGroupRef.current.position.y = THREE.MathUtils.lerp(visualGroupRef.current.position.y, 0.05, 0.15);
+      }
+    }
+
+    // Advance GPU skid-mark shader clock & emit marks when physics stepped
+    skidClockRef.current += visDt;
+    const skidNow = skidClockRef.current;
+    skidResources.mat.uniforms.uTime.value = skidNow;
+
+    if (physicsSteppedRef.current) {
+      physicsSteppedRef.current = false;
+      let skidDirty = false;
+      const skidHalfW = carClass === 'f1' ? 0.24 : 0.165;
+      const absLat = Math.abs(lateralSpeed);
+      const isBaldSpin = !isHeldOnGrid && tireHealthRef.current < 38 && throttle > 0.65 && speedKmh > 20;
+      const isHeavyBrake = !isHeldOnGrid && brake > 0.65 && forwardSpeed > 12;
+
+      for (let i = 0; i < WHEEL_MOUNTS.length; i++) {
+        const wh = wheelHitData[i];
+        const prev = prevWheelPosRef[i];
+        if (isHeldOnGrid || !wh.grounded || speedKmh <= 10) {
+          prev.valid = false;
+          continue;
+        }
+
+        const isRear = i >= 2;
+        let rawAlpha = 0;
+        if (isRear) {
+          if (absLat > 4.0) rawAlpha = Math.max(rawAlpha, Math.min(0.68, (absLat - 4.0) * 0.10 + 0.18));
+          if (handbrake && speedKmh > 12) rawAlpha = Math.max(rawAlpha, 0.62);
+          if (isHeavyBrake) rawAlpha = Math.max(rawAlpha, 0.45 * brake);
+          if (isBaldSpin) rawAlpha = Math.max(rawAlpha, 0.36);
+        } else {
+          if (isHeavyBrake && speedKmh > 55) rawAlpha = Math.max(rawAlpha, 0.38 * brake);
+          if (absLat > 7.5) rawAlpha = Math.max(rawAlpha, Math.min(0.50, (absLat - 7.5) * 0.08 + 0.15));
+        }
+
+        if (currentTier >= 4) rawAlpha = Math.min(rawAlpha, 0.42);
+        if (rawAlpha <= 0.05) {
+          prev.valid = false;
+          continue;
+        }
+
+        const hx = wh.hx;
+        const hy = wh.hy + 0.05;
+        const hz = wh.hz;
+        if (!prev.valid) {
+          prev.valid = true;
+          prev.x = hx;
+          prev.y = hy;
+          prev.z = hz;
+          continue;
+        }
+
+        const dx = hx - prev.x;
+        const dz = hz - prev.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist > 5.5) {
+          prev.x = hx;
+          prev.y = hy;
+          prev.z = hz;
+        } else if (dist >= 0.75) {
+          const px = (-dz / dist) * skidHalfW;
+          const pz = (dx / dist) * skidHalfW;
+          const slot = skidHeadRef.current;
+          const vBase = slot * 4;
+          const pBase = vBase * 3;
+          const posArr = skidResources.positions;
+
+          posArr[pBase] = prev.x - px;
+          posArr[pBase + 1] = prev.y;
+          posArr[pBase + 2] = prev.z - pz;
+
+          posArr[pBase + 3] = prev.x + px;
+          posArr[pBase + 4] = prev.y;
+          posArr[pBase + 5] = prev.z + pz;
+
+          posArr[pBase + 6] = hx - px;
+          posArr[pBase + 7] = hy;
+          posArr[pBase + 8] = hz - pz;
+
+          posArr[pBase + 9] = hx + px;
+          posArr[pBase + 10] = hy;
+          posArr[pBase + 11] = hz + pz;
+
+          skidResources.birthTimes[vBase] = skidNow;
+          skidResources.birthTimes[vBase + 1] = skidNow;
+          skidResources.birthTimes[vBase + 2] = skidNow;
+          skidResources.birthTimes[vBase + 3] = skidNow;
+
+          skidResources.alphas[vBase] = rawAlpha;
+          skidResources.alphas[vBase + 1] = rawAlpha;
+          skidResources.alphas[vBase + 2] = rawAlpha;
+          skidResources.alphas[vBase + 3] = rawAlpha;
+
+          skidHeadRef.current = (slot + 1) % SKID_MAX_QUADS;
+          prev.x = hx;
+          prev.y = hy;
+          prev.z = hz;
+          skidDirty = true;
+        }
+      }
+
+      if (skidDirty) {
+        skidResources.posAttr.needsUpdate = true;
+        skidResources.birthAttr.needsUpdate = true;
+        skidResources.alphaAttr.needsUpdate = true;
+      }
+    }
+
+    // Silky-smooth interpolated Camera tracking (reads Rapier-interpolated transform!)
+    if (cameraMode === 'chase' || cameraMode === 'cockpit') {
+      const bodyObj = visualGroupRef.current?.parent;
+      if (bodyObj) {
+        bodyObj.updateWorldMatrix(true, false);
+        bodyObj.getWorldPosition(tmpCamCarPos);
+        bodyObj.getWorldQuaternion(tmpCamCarQuat);
+      } else {
+        const t = rb.translation();
+        const r = rb.rotation();
+        tmpCamCarPos.set(t.x, t.y, t.z);
+        tmpCamCarQuat.set(r.x, r.y, r.z, r.w);
+      }
+      tmpCamForward.set(0, 0, 1).applyQuaternion(tmpCamCarQuat).normalize();
+
+      if (cameraMode === 'chase') {
+        tmpCamOffset.set(0, 5.2, -13.0).applyQuaternion(tmpCamCarQuat);
+        tmpDesiredCam.copy(tmpCamCarPos).add(tmpCamOffset);
+        if (camPosRef.current.lengthSq() === 0) camPosRef.current.copy(tmpDesiredCam);
+        const camAlpha = 1 - Math.exp(-9 * visDt);
+        camPosRef.current.lerp(tmpDesiredCam, camAlpha);
+
+        tmpLookTarget.copy(tmpCamCarPos).addScaledVector(tmpCamForward, 8).add(tmpLookUpOffset);
+        if (camLookRef.current.lengthSq() === 0) camLookRef.current.copy(tmpLookTarget);
+        const lookAlpha = 1 - Math.exp(-12 * visDt);
+        camLookRef.current.lerp(tmpLookTarget, lookAlpha);
+
+        state.camera.position.copy(camPosRef.current);
+        state.camera.lookAt(camLookRef.current);
+      } else {
+        tmpCamOffset.set(0, 1.55, 0.35).applyQuaternion(tmpCamCarQuat);
+        tmpDesiredCam.copy(tmpCamCarPos).add(tmpCamOffset);
+        tmpCamOffset.set(0, 1.35, 18).applyQuaternion(tmpCamCarQuat);
+        tmpLookTarget.copy(tmpCamCarPos).add(tmpCamOffset);
+        state.camera.position.copy(tmpDesiredCam);
+        state.camera.lookAt(tmpLookTarget);
+      }
+    }
+
+    const isBrakingNow = brakeLightRef.current > 0.05;
+    const lightsOrBrakeChanged =
+      headlightsOnRef.current !== lastPublishedHeadlightsRef.current ||
+      isBrakingNow !== lastPublishedBrakingRef.current;
+
     // 20 Hz Network State Emission for Multiplayer & Solo Standings/Minimap
-    netEmitAccRef.current += dt;
-    if (onLocalCarSampleRef.current && (forceNetEmit || netEmitAccRef.current >= 0.05)) {
+    netEmitAccRef.current += visDt;
+    if (onLocalCarSampleRef.current && (forceNetEmitRef.current || lightsOrBrakeChanged || netEmitAccRef.current >= 0.05)) {
+      forceNetEmitRef.current = false;
       netEmitAccRef.current = 0;
+      const t = rb.translation();
+      const r = rb.rotation();
+      const lv = rb.linvel();
       const visualOffsetY = visualGroupRef.current ? visualGroupRef.current.position.y - 0.02 : 0;
       onLocalCarSampleRef.current({
         x: t.x,
@@ -1507,6 +1646,8 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
         steer: visualSteerRef.current,
         speedKmh: isHeldOnGrid ? 0 : Math.round(speedKmh),
         wheelRoll: wheelRollRef.current,
+        braking: isBrakingNow,
+        headlights: headlightsOnRef.current,
         lapNumber: lapNumberRef.current,
         completedLaps: completedLapsRef.current,
         trackS: prevTrackSRef.current,
@@ -1522,11 +1663,12 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
       });
     }
 
-    // Telemetry ~15Hz (or immediately when start lights change)
-    telemetryAccRef.current += dt;
+    // Telemetry ~15Hz (or immediately when start lights, headlights, or brake state change)
+    telemetryAccRef.current += visDt;
     const phaseChanged =
       raceStartPhaseRef.current !== lastPublishedPhaseRef.current ||
-      startLightsLitRef.current !== lastPublishedLightsRef.current;
+      startLightsLitRef.current !== lastPublishedLightsRef.current ||
+      lightsOrBrakeChanged;
 
     if (phaseChanged || telemetryAccRef.current >= 0.066) {
       telemetryAccRef.current = 0;
@@ -1544,11 +1686,15 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
         wasIdleOrbitRef.current = isIdleOrbit;
         lastPublishedPhaseRef.current = raceStartPhaseRef.current;
         lastPublishedLightsRef.current = startLightsLitRef.current;
+        lastPublishedHeadlightsRef.current = headlightsOnRef.current;
+        lastPublishedBrakingRef.current = isBrakingNow;
         const payload: TelemetryData = {
           speedKmh: isHeldOnGrid ? 0 : Math.round(speedKmh),
           throttle,
           brake,
           steer: steerRef.current,
+          headlightsOn: headlightsOnRef.current,
+          isBraking: isBrakingNow,
           surface: currentSurface,
           surfacePenaltyPct: currentTier * 10,
           engineHealth: engineHealthRef.current,
@@ -1606,6 +1752,10 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
             rotation={ZERO_VEC3}
             steerAngleRef={visualSteerRef}
             wheelRotationRef={wheelRollRef}
+            brakeIntensityRef={brakeLightRef}
+            headlightsOn={headlightsOn}
+            enableRealLights={true}
+            environmentTheme={environmentTheme}
             color={presetConfig.primaryColor}
             secondaryColor={presetConfig.secondaryColor}
             carClass={carClass}

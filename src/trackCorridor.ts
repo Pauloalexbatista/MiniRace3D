@@ -182,10 +182,18 @@ export function computeCorridor(spline: SplineNode[], isClosed: boolean = true):
     const sx = -ty;
     const sy = tx;
 
+    const wTL = getZone(p, 'wallThickness', 'L');
+    const wTR = getZone(p, 'wallThickness', 'R');
+    wallTL[i] = wTL;
+    wallTR[i] = wTR;
+    const bL = bermaWidth(p, 'L');
+    const bR = bermaWidth(p, 'R');
+
     // Apenas restringe se estiver fisicamente perto de OUTRO tro?o distante da pista (ex: duas retas paralelas coladas)
     let maxL = 1e9;
     let maxR = 1e9;
-    const reach = hw + 30;
+    const maxSideReach = hw + Math.max(bL + wTL, bR + wTR);
+    const reach = Math.max(hw + 30, maxSideReach * 2.15);
 
     for (let j = 0; j < N; j++) {
       if (j === i) continue;
@@ -218,16 +226,11 @@ export function computeCorridor(spline: SplineNode[], isClosed: boolean = true):
       else maxR = Math.min(maxR, limit);
     }
 
-    const wTL = getZone(p, 'wallThickness', 'L');
-    const wTR = getZone(p, 'wallThickness', 'R');
-    wallTL[i] = wTL;
-    wallTR[i] = wTR;
-    const bL = bermaWidth(p, 'L');
-    const bR = bermaWidth(p, 'R');
-
     // Manter margem mínima de berma para o muro fechar naturalmente antes do bico da estrada
-    scaleL[i] = bL > 0 && maxL < 1e8 ? Math.max(0.35, Math.min(1.0, (maxL - hw - wTL) / bL)) : 1.0;
-    scaleR[i] = bR > 0 && maxR < 1e8 ? Math.max(0.35, Math.min(1.0, (maxR - hw - wTR) / bR)) : 1.0;
+    const minScaleL = bL > 0 ? Math.min(0.35, 2.0 / bL) : 1.0;
+    const minScaleR = bR > 0 ? Math.min(0.35, 2.0 / bR) : 1.0;
+    scaleL[i] = bL > 0 && maxL < 1e8 ? Math.max(minScaleL, Math.min(1.0, (maxL - hw - wTL) / bL)) : 1.0;
+    scaleR[i] = bR > 0 && maxR < 1e8 ? Math.max(minScaleR, Math.min(1.0, (maxR - hw - wTR) / bR)) : 1.0;
   }
 
   // Suaviza??o ligeira apenas onde houver interfer?ncia entre tro?os diferentes

@@ -21,6 +21,7 @@ export interface RemoteCar3DProps {
   inPit?: boolean;
   finished?: boolean;
   connected?: boolean;
+  environmentTheme?: 'day' | 'sunset' | 'night';
 }
 
 export const RemoteCar3D: React.FC<RemoteCar3DProps> = React.memo(({
@@ -36,10 +37,13 @@ export const RemoteCar3D: React.FC<RemoteCar3DProps> = React.memo(({
   inPit = false,
   finished = false,
   connected = true,
+  environmentTheme = 'day',
 }) => {
   const rbRef = useRef<RapierRigidBody>(null);
   const steerRef = useRef(0);
   const wheelRollRef = useRef(0);
+  const brakeRef = useRef(0);
+  const headlightsRef = useRef(true);
   const initializedRef = useRef(false);
   const velRef = useRef({ x: 0, y: 0, z: 0 });
   const bodyUserData = useMemo(
@@ -100,6 +104,8 @@ export const RemoteCar3D: React.FC<RemoteCar3DProps> = React.memo(({
 
     steerRef.current = THREE.MathUtils.lerp(steerRef.current, c.steer || 0, Math.min(1, dt * 14));
     wheelRollRef.current += ((c.speedKmh || 0) / 3.6) * dt * 1.5;
+    brakeRef.current = c.braking ? 1 : 0;
+    headlightsRef.current = c.headlights !== undefined ? Boolean(c.headlights) : true;
   });
 
   return (
@@ -123,6 +129,10 @@ export const RemoteCar3D: React.FC<RemoteCar3DProps> = React.memo(({
           rotation={ZERO_VEC3}
           steerAngleRef={steerRef}
           wheelRotationRef={wheelRollRef}
+          brakeIntensityRef={brakeRef}
+          headlightsOnRef={headlightsRef}
+          enableRealLights={false}
+          environmentTheme={environmentTheme}
           color={primaryColor}
           secondaryColor={secondaryColor}
           carClass={carClass}

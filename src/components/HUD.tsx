@@ -20,6 +20,8 @@ interface HUDProps {
   onChangeCameraMode: (mode: 'chase' | 'cockpit' | 'orbit') => void;
   onChangeSpeedPreset: (preset: SpeedPreset) => void;
   onResetCar: () => void;
+  headlightsOn?: boolean;
+  onToggleHeadlights?: () => void;
   totalLaps?: number;
   gridSlotNumber?: number;
   waitingBannerText?: string | null;
@@ -54,6 +56,8 @@ export const HUD: React.FC<HUDProps> = React.memo((props) => {
   const bestLapMs = props.bestLapMs !== undefined ? props.bestLapMs : store.bestLapMs;
   const lastLapMs = props.lastLapMs !== undefined ? props.lastLapMs : store.lastLapMs;
   const showLapTimer = props.showLapTimer ?? true;
+  const headlightsOn = props.headlightsOn ?? store.headlightsOn;
+  const isBraking = store.isBraking || brake > 0.05;
   const { totalLaps, gridSlotNumber, waitingBannerText, standings, myDriverId, finishBanner } = props;
   const getGear = (speed: number) => {
     if (speed < 5) return 'N';
@@ -566,6 +570,50 @@ export const HUD: React.FC<HUDProps> = React.memo((props) => {
             }}>
               km/h
             </span>
+          </div>
+        </div>
+
+        {/* Headlights & Rear Brake Light Indicators */}
+        <div style={{ width: '100%', display: 'flex', gap: 6, marginTop: 2 }}>
+          <button
+            type="button"
+            onClick={props.onToggleHeadlights}
+            title="Ligar/Desligar faróis dianteiros (Tecla L)"
+            style={{
+              flex: 1,
+              padding: '4px 8px',
+              borderRadius: 7,
+              border: headlightsOn ? '1px solid rgba(250, 204, 21, 0.55)' : '1px solid rgba(148, 163, 184, 0.25)',
+              background: headlightsOn ? 'rgba(250, 204, 21, 0.18)' : 'rgba(30, 41, 59, 0.75)',
+              color: headlightsOn ? '#fde047' : '#64748b',
+              fontSize: 9.5,
+              fontWeight: 900,
+              letterSpacing: '0.04em',
+              cursor: props.onToggleHeadlights ? 'pointer' : 'default',
+              boxShadow: headlightsOn ? '0 0 12px rgba(250, 204, 21, 0.22)' : 'none',
+              transition: 'all 0.12s ease',
+            }}
+          >
+            {headlightsOn ? '💡 FARÓIS ON (L)' : '💡 FARÓIS OFF (L)'}
+          </button>
+          <div
+            style={{
+              padding: '4px 10px',
+              borderRadius: 7,
+              border: isBraking ? '1px solid rgba(248, 113, 113, 0.8)' : '1px solid rgba(148, 163, 184, 0.2)',
+              background: isBraking ? 'rgba(239, 68, 68, 0.35)' : 'rgba(30, 41, 59, 0.65)',
+              color: isBraking ? '#fecaca' : '#64748b',
+              fontSize: 9.5,
+              fontWeight: 900,
+              letterSpacing: '0.06em',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: isBraking ? '0 0 14px rgba(239, 68, 68, 0.55)' : 'none',
+              transition: 'all 0.08s ease',
+            }}
+          >
+            🔴 STOP
           </div>
         </div>
 

@@ -88,6 +88,8 @@ export interface NetCarState {
   steer: number;
   speedKmh: number;
   wheelRoll: number;
+  braking?: boolean;
+  headlights?: boolean;
   lapNumber: number;
   completedLaps: number;
   trackS: number;
@@ -118,6 +120,8 @@ export interface LocalCarNetSample {
   steer: number;
   speedKmh: number;
   wheelRoll: number;
+  braking?: boolean;
+  headlights?: boolean;
   lapNumber: number;
   completedLaps: number;
   trackS: number;

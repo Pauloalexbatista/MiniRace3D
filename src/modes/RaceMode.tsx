@@ -11,6 +11,7 @@ import {
   Eye,
   Flag,
   Home,
+  Lightbulb,
   LogOut,
   Play,
   RefreshCw,
@@ -41,7 +42,9 @@ import {
   computeSpline,
   createDefaultCircuit,
   fuseAndComputePitLane,
+  RoadBranch,
   SavedCircuit,
+  SceneryPatch,
   SplineNode,
 } from '../tracks';
 import {
@@ -63,6 +66,8 @@ const PROFILE_STORAGE_KEY = 'minirace3d_driver_profile';
 const TUNINGS_STORAGE_KEY = 'minirace3d_race_tunings';
 const SAVED_CIRCUITS_STORAGE_KEY = 'minirace3d_saved_circuits';
 const VALID_CAR_CLASSES: CarClass[] = ['f1', 'gt', 'rally', 'drift'];
+const EMPTY_PATCHES: SceneryPatch[] = [];
+const EMPTY_BRANCHES: RoadBranch[] = [];
 
 const SOLO_AI_TEMPLATES = [
   { name: 'M. Verstappen', primaryColor: '#1e3a8a', secondaryColor: '#ef4444' },
@@ -272,6 +277,7 @@ export const RaceMode: React.FC<RaceModeProps> = ({
 
   // Active 3D Race UI & Sync state
   const [cameraMode, setCameraMode] = useState<'chase' | 'cockpit' | 'orbit'>('chase');
+  const [headlightsOn, setHeadlightsOn] = useState<boolean>(true);
   const [recoverTrigger, setRecoverTrigger] = useState<number>(0);
   const [racePhase, setRacePhase] = useState<'loading' | 'ready' | 'lights' | 'green' | 'racing' | 'finished'>('loading');
   const [lightsLit, setLightsLit] = useState<number>(0);
@@ -286,6 +292,7 @@ export const RaceMode: React.FC<RaceModeProps> = ({
   const soloFinishCounterRef = useRef<number>(0);
   const soloFinishTimerRef = useRef<number | null>(null);
   const soloLastStandingsEmitRef = useRef<number>(0);
+  const lastSoloOnlyKeyRef = useRef<string>('');
   const minimapDotsRef = useRef<MinimapDriverDot[]>([]);
   const autoJoinedCodeRef = useRef<string | null>(null);
 
@@ -503,6 +510,7 @@ export const RaceMode: React.FC<RaceModeProps> = ({
     hostAiStatesRef.current = [];
     soloAiFinishOrderRef.current.clear();
     soloFinishCounterRef.current = 0;
+    lastSoloOnlyKeyRef.current = '';
   }, [isActiveRace, activeRaceCircuit?.id]);
 
   // Synchronized countdown driver (shared by Online & Solo)
@@ -552,7 +560,11 @@ export const RaceMode: React.FC<RaceModeProps> = ({
     return () => window.cancelAnimationFrame(rafId);
   }, [isActiveRace, activeSync, isRaceFinished]);
 
-  // Key 'C' camera switch in Race Mode
+  // Key 'C' camera switch & Key 'L' headlights toggle in Race Mode
+  const handleToggleHeadlights = useCallback(() => setHeadlightsOn((prev) => !prev), []);
+  const handleNoopSpeedPreset = useCallback(() => {}, []);
+  const handleRecoverCar = useCallback(() => setRecoverTrigger((prev) => prev + 1), []);
+
   useEffect(() => {
     if (!isActiveRace) return;
     const onKeyDown = (e: KeyboardEvent) => {
@@ -560,6 +572,8 @@ export const RaceMode: React.FC<RaceModeProps> = ({
       if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
       if (e.code === 'KeyC' && !e.repeat) {
         setCameraMode((prev) => (prev === 'chase' ? 'cockpit' : prev === 'cockpit' ? 'orbit' : 'chase'));
+      } else if (e.code === 'KeyL' && !e.repeat) {
+        setHeadlightsOn((prev) => !prev);
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -582,10 +596,15 @@ export const RaceMode: React.FC<RaceModeProps> = ({
     (force = false) => {
       if (!soloSession) return;
       const now = performance.now();
-      if (!force && now - soloLastStandingsEmitRef.current < 140) return;
+      if (!force && now - soloLastStandingsEmitRef.current < 250) return;
       soloLastStandingsEmitRef.current = now;
 
       const localSample = localCarSampleRef.current;
+      if (!force && soloSession.aiRacers.length === 0) {
+        const key = `${localSample?.lapNumber ?? 1}:${localSample?.completedLaps ?? 0}:${Boolean(localSample?.inPit)}:${Boolean(localSample?.finished)}`;
+        if (key === lastSoloOnlyKeyRef.current) return;
+        lastSoloOnlyKeyRef.current = key;
+      }
       const entries: Array<RaceStandingEntry & { _order: number }> = [];
 
       entries.push({
@@ -1078,7 +1097,7 @@ export const RaceMode: React.FC<RaceModeProps> = ({
             </div>
 
             <button
-              onClick={() => setRecoverTrigger((prev) => prev + 1)}
+              onClick={handleRecoverCar}
               title="Voltar à pista junto ao acidente (-35m)"
               style={{
                 padding: '6px 10px',
@@ -1096,6 +1115,27 @@ export const RaceMode: React.FC<RaceModeProps> = ({
             >
               <RotateCcw size={13} />
               <span>Recuperar (R)</span>
+            </button>
+
+            <button
+              onClick={handleToggleHeadlights}
+              title="Ligar/Desligar faróis dianteiros (Tecla L)"
+              style={{
+                padding: '6px 10px',
+                borderRadius: 7,
+                fontSize: 11,
+                fontWeight: 800,
+                cursor: 'pointer',
+                border: headlightsOn ? '1px solid rgba(250, 204, 21, 0.55)' : '1px solid rgba(148, 163, 184, 0.35)',
+                background: headlightsOn ? 'rgba(250, 204, 21, 0.18)' : 'rgba(30, 41, 59, 0.7)',
+                color: headlightsOn ? '#fde047' : '#94a3b8',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 5,
+              }}
+            >
+              <Lightbulb size={13} />
+              <span>{headlightsOn ? 'Faróis: ON (L)' : 'Faróis: OFF (L)'}</span>
             </button>
           </div>
 
@@ -1127,15 +1167,15 @@ export const RaceMode: React.FC<RaceModeProps> = ({
           >
             <Environment3D theme={activeEnvTheme} groundY={groundY} />
             <Scenery3D
-              patches={activeRaceCircuit.sceneryPatches || []}
+              patches={activeRaceCircuit.sceneryPatches ?? EMPTY_PATCHES}
               spline={currentSpline}
               isClosed={isClosed}
-              branches={activeRaceCircuit.branches || []}
+              branches={activeRaceCircuit.branches ?? EMPTY_BRANCHES}
               pitSpline={currentPitSpline}
               groundY={groundY}
             />
 
-            <Physics gravity={[0, -24, 0]} timeStep="vary">
+            <Physics gravity={[0, -24, 0]} timeStep={1 / 60} interpolate={true}>
               <RigidBody type="fixed" friction={0.05} restitution={0.05}>
                 <CuboidCollider args={[10000, 1, 10000]} position={[0, safetyFloorY - 1.0, 0]} />
               </RigidBody>
@@ -1146,7 +1186,7 @@ export const RaceMode: React.FC<RaceModeProps> = ({
                 spline={currentSpline}
                 controlPoints={activeRaceCircuit.controlPoints}
                 pitSpline={currentPitSpline}
-                branches={activeRaceCircuit.branches || []}
+                branches={activeRaceCircuit.branches ?? EMPTY_BRANCHES}
                 isClosed={isClosed}
                 showOutlines={true}
                 showGuardrails={true}
@@ -1163,13 +1203,16 @@ export const RaceMode: React.FC<RaceModeProps> = ({
                 spline={currentSpline}
                 isClosed={isClosed}
                 isRaceActive={true}
-                branches={activeRaceCircuit.branches || []}
+                branches={activeRaceCircuit.branches ?? EMPTY_BRANCHES}
                 pitSpline={currentPitSpline}
                 groundY={groundY}
                 cameraMode={cameraMode}
                 speedPreset={activeSpeedPreset}
                 carClass={myCarClass}
                 carTuning={myCarTuning}
+                headlightsOn={headlightsOn}
+                onToggleHeadlights={handleToggleHeadlights}
+                environmentTheme={activeEnvTheme}
                 recoverTrigger={recoverTrigger}
                 gridSlotIndex={myGridSlot}
                 totalLaps={activeTotalLaps}
@@ -1205,6 +1248,7 @@ export const RaceMode: React.FC<RaceModeProps> = ({
                         inPit={st?.inPit}
                         finished={st?.finished}
                         connected={p.connected}
+                        environmentTheme={activeEnvTheme}
                       />
                     );
                   })}
@@ -1222,6 +1266,7 @@ export const RaceMode: React.FC<RaceModeProps> = ({
                   localCarPosRef={localCarSampleRef}
                   remoteCarsRef={raceClient.remoteCarsRef}
                   standingsMap={standingsRankMap}
+                  environmentTheme={activeEnvTheme}
                   onAiStatesUpdate={handleAiStatesUpdate}
                 />
               )}
@@ -1245,6 +1290,7 @@ export const RaceMode: React.FC<RaceModeProps> = ({
                       inPit={st?.inPit}
                       finished={st?.finished}
                       connected={true}
+                      environmentTheme={activeEnvTheme}
                     />
                   );
                 })}
@@ -1268,8 +1314,10 @@ export const RaceMode: React.FC<RaceModeProps> = ({
           cameraMode={cameraMode}
           speedPreset={activeSpeedPreset}
           onChangeCameraMode={setCameraMode}
-          onChangeSpeedPreset={() => {}}
-          onResetCar={() => setRecoverTrigger((prev) => prev + 1)}
+          onChangeSpeedPreset={handleNoopSpeedPreset}
+          onResetCar={handleRecoverCar}
+          headlightsOn={headlightsOn}
+          onToggleHeadlights={handleToggleHeadlights}
           totalLaps={activeTotalLaps}
           gridSlotNumber={myGridSlot + 1}
           waitingBannerText={waitingText}
@@ -1282,7 +1330,7 @@ export const RaceMode: React.FC<RaceModeProps> = ({
         <RaceMinimap
           spline={currentSpline}
           isClosed={isClosed}
-          branches={activeRaceCircuit.branches}
+          branches={activeRaceCircuit.branches ?? EMPTY_BRANCHES}
           pitSpline={currentPitSpline}
           dotsRef={minimapDotsRef}
           circuitName={activeRaceCircuit.name}

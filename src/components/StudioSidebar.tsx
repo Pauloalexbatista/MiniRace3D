@@ -1501,12 +1501,12 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 5, marginBottom: 8 }}>
                       {[
                         { key: 'width', name: 'Asfalto', valL: asphaltW, valR: asphaltW, step: 1.0, min: 6.0, max: 32.0, bg: '#0284c7', text: '#fff', colorKey: 'asphaltColor', curColor: activePt?.asphaltColor || '#64748b' },
-                        { key: 'whiteLineWidth', name: 'Linha Branc', valL: whiteLineWL, valR: whiteLineWR, step: 0.1, min: 0.0, max: 3.0, bg: '#ffffff', text: '#000', colorKey: 'whiteLineColor', curColor: activePt?.whiteLineColor || '#ffffff' },
-                        { key: 'curbYellowWidth', name: 'Z. Amarela', valL: curbYellowWL, valR: curbYellowWR, step: 0.1, min: 0.0, max: 3.0, bg: '#facc15', text: '#000', colorKey: 'curbYellowColor', curColor: activePt?.curbYellowColor || '#facc15' },
-                        { key: 'curbRedWidth', name: 'Z. Vermelha', valL: curbRedWL, valR: curbRedWR, step: 0.1, min: 0.0, max: 3.0, bg: '#ef4444', text: '#fff', colorKey: 'curbRedColor', curColor: activePt?.curbRedColor || '#dc2626' },
-                        { key: 'grassWidth', name: 'Relva', valL: grassWL, valR: grassWR, step: 0.5, min: 0.0, max: 15.0, bg: '#15803d', text: '#fff', colorKey: 'grassColor', curColor: activePt?.grassColor || '#22773b' },
-                        { key: 'sandWidth', name: 'Areia', valL: sandWL, valR: sandWR, step: 0.5, min: 0.0, max: 15.0, bg: '#d97706', text: '#fff', colorKey: 'sandColor', curColor: activePt?.sandColor || '#d97706' },
-                        { key: 'gravelWidth', name: 'Gravilha', valL: gravelWL, valR: gravelWR, step: 0.5, min: 0.0, max: 15.0, bg: '#57534e', text: '#fff', colorKey: 'gravelColor', curColor: activePt?.gravelColor || '#78716c' },
+                        { key: 'whiteLineWidth', name: 'Linha Branc', valL: whiteLineWL, valR: whiteLineWR, step: 0.1, min: 0.0, max: 5.0, bg: '#ffffff', text: '#000', colorKey: 'whiteLineColor', curColor: activePt?.whiteLineColor || '#ffffff' },
+                        { key: 'curbYellowWidth', name: 'Z. Amarela', valL: curbYellowWL, valR: curbYellowWR, step: 0.1, min: 0.0, max: 5.0, bg: '#facc15', text: '#000', colorKey: 'curbYellowColor', curColor: activePt?.curbYellowColor || '#facc15' },
+                        { key: 'curbRedWidth', name: 'Z. Vermelha', valL: curbRedWL, valR: curbRedWR, step: 0.1, min: 0.0, max: 5.0, bg: '#ef4444', text: '#fff', colorKey: 'curbRedColor', curColor: activePt?.curbRedColor || '#dc2626' },
+                        { key: 'grassWidth', name: 'Relva', valL: grassWL, valR: grassWR, step: 0.5, min: 0.0, max: 25.0, bg: '#15803d', text: '#fff', colorKey: 'grassColor', curColor: activePt?.grassColor || '#22773b' },
+                        { key: 'sandWidth', name: 'Areia', valL: sandWL, valR: sandWR, step: 0.5, min: 0.0, max: 25.0, bg: '#d97706', text: '#fff', colorKey: 'sandColor', curColor: activePt?.sandColor || '#d97706' },
+                        { key: 'gravelWidth', name: 'Gravilha', valL: gravelWL, valR: gravelWR, step: 0.5, min: 0.0, max: 25.0, bg: '#57534e', text: '#fff', colorKey: 'gravelColor', curColor: activePt?.gravelColor || '#78716c' },
                         { key: 'wallThickness', name: 'Muro', valL: wallWL, valR: wallWR, step: 0.1, min: 0.2, max: 2.0, bg: '#94a3b8', text: '#000', colorKey: 'wallColor', curColor: activePt?.wallColor || '#ffffff' }
                       ].map((item) => {
                         const isMixedBoth = zoneSide === 'both' && item.key !== 'width' && Math.abs(item.valL - item.valR) > 0.04;
@@ -2579,6 +2579,10 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span>Travão de Mão:</span>
                   <span style={{ fontWeight: 800, color: '#fff' }}>Espaço</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span>Ligar/Desligar Luzes:</span>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: '#fff' }}>Tecla L</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span>Mudar Câmara:</span>

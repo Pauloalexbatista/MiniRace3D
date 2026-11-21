@@ -8,10 +8,19 @@ import { buildBranchGeometries } from '../branchRoads';
 import { buildUnifiedRoadNetwork } from '../roadFusion';
 import { subscribeTelemetry, getTelemetry } from '../telemetryStore';
 
+const getStartLightsKey = () => {
+  const t = getTelemetry();
+  return `${t.raceStartPhase}:${t.startLightsLit}`;
+};
+
 const StartGantryLights: React.FC = React.memo(() => {
-  const telemetry = useSyncExternalStore(subscribeTelemetry, getTelemetry);
-  const { raceStartPhase, startLightsLit } = telemetry;
+  const key = useSyncExternalStore(subscribeTelemetry, getStartLightsKey);
+  const [raceStartPhase, rawLit] = key.split(':');
+  const startLightsLit = Number(rawLit) || 0;
   const xs = [-2.1, -0.7, 0.7, 2.1];
+
+  const circleGeo = useMemo(() => new THREE.CircleGeometry(0.28, 16), []);
+  useEffect(() => () => { circleGeo.dispose(); }, [circleGeo]);
 
   return (
     <>
@@ -26,12 +35,10 @@ const StartGantryLights: React.FC = React.memo(() => {
 
         return (
           <React.Fragment key={`light_${idx}`}>
-            <mesh position={[lx, 6.05, 0.37]}>
-              <circleGeometry args={[0.28, 20]} />
+            <mesh position={[lx, 6.05, 0.37]} geometry={circleGeo}>
               <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={intensity} />
             </mesh>
-            <mesh position={[lx, 6.05, -0.37]} rotation={[0, Math.PI, 0]}>
-              <circleGeometry args={[0.28, 20]} />
+            <mesh position={[lx, 6.05, -0.37]} rotation={[0, Math.PI, 0]} geometry={circleGeo}>
               <meshStandardMaterial color={color} emissive={emissive} emissiveIntensity={intensity} />
             </mesh>
           </React.Fragment>
@@ -1823,6 +1830,29 @@ export const Track3D: React.FC<Track3DProps> = ({
     return tex;
   }, []);
 
+  const finishLineTex = useMemo(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, 32, 32);
+      ctx.fillRect(32, 32, 32, 32);
+      ctx.fillStyle = '#111827';
+      ctx.fillRect(32, 0, 32, 32);
+      ctx.fillRect(0, 32, 32, 32);
+    }
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.ClampToEdgeWrapping;
+    tex.magFilter = THREE.NearestFilter;
+    tex.repeat.set(Math.max(4, Math.round((geometries?.startRoadWidth || 18) / 2.2)), 1);
+    tex.anisotropy = 4;
+    tex.needsUpdate = true;
+    return tex;
+  }, [geometries?.startRoadWidth]);
+
   const pitTimingLineGeo = useMemo(() => {
     const startF = geometries?.frames?.[0];
     if (!startF) return null;
@@ -2286,6 +2316,7 @@ function disposeGeometriesIn(obj: object | null | undefined) {
   useEffect(() => () => { pitStopTex.dispose(); }, [pitStopTex]);
   useEffect(() => () => { pitStopZoneGeo?.dispose(); }, [pitStopZoneGeo]);
   useEffect(() => () => { pitTimingLineTex.dispose(); }, [pitTimingLineTex]);
+  useEffect(() => () => { finishLineTex.dispose(); }, [finishLineTex]);
   useEffect(() => () => { pitTimingLineGeo?.dispose(); }, [pitTimingLineGeo]);
 
 
@@ -2296,7 +2327,7 @@ function disposeGeometriesIn(obj: object | null | undefined) {
       {/* Estradas Secundarias / Ramais (quando não há rede fundida) */}
       {!fusedNetwork && branchGeos && branchGeos.roadGeo && (
         <TrimeshColliderWrap enabled={enablePhysics} geo={branchGeos.roadGeo} surface="TRACK">
-          <mesh geometry={branchGeos.roadGeo} receiveShadow castShadow>
+          <mesh geometry={branchGeos.roadGeo} receiveShadow>
             <meshStandardMaterial
               color='#ffffff' vertexColors
               roughness={0.8}
@@ -2348,7 +2379,7 @@ function disposeGeometriesIn(obj: object | null | undefined) {
         </>
       ) : (
         <TrimeshColliderWrap enabled={enablePhysics} geo={geometries.roadGeo} surface="TRACK">
-          <mesh geometry={geometries.roadGeo} receiveShadow castShadow>
+          <mesh geometry={geometries.roadGeo} receiveShadow>
             <meshStandardMaterial
               color='#ffffff' vertexColors
               roughness={0.8}
@@ -2480,7 +2511,7 @@ function disposeGeometriesIn(obj: object | null | undefined) {
               )}
               {showGuardrails && (
                 <TrimeshColliderWrap enabled={enablePhysics} geo={fusedNetwork.wallGeo} surface="WALL">
-                  <mesh geometry={fusedNetwork.wallGeo} castShadow receiveShadow>
+                  <mesh geometry={fusedNetwork.wallGeo} receiveShadow>
                     <meshStandardMaterial
                       color={wallColor}
                       roughness={0.3}
@@ -2534,14 +2565,14 @@ function disposeGeometriesIn(obj: object | null | undefined) {
               )}
               {showGuardrails && geometries.bridgeWallLGeo && (
                 <TrimeshColliderWrap enabled={enablePhysics} geo={geometries.bridgeWallLGeo} surface="WALL">
-                  <mesh geometry={geometries.bridgeWallLGeo} castShadow receiveShadow>
+                  <mesh geometry={geometries.bridgeWallLGeo} receiveShadow>
                     <meshStandardMaterial color={wallColor} roughness={0.3} metalness={0.08} side={THREE.DoubleSide} />
                   </mesh>
                 </TrimeshColliderWrap>
               )}
               {showGuardrails && geometries.bridgeWallRGeo && (
                 <TrimeshColliderWrap enabled={enablePhysics} geo={geometries.bridgeWallRGeo} surface="WALL">
-                  <mesh geometry={geometries.bridgeWallRGeo} castShadow receiveShadow>
+                  <mesh geometry={geometries.bridgeWallRGeo} receiveShadow>
                     <meshStandardMaterial color={wallColor} roughness={0.3} metalness={0.08} side={THREE.DoubleSide} />
                   </mesh>
                 </TrimeshColliderWrap>
@@ -2591,14 +2622,14 @@ function disposeGeometriesIn(obj: object | null | undefined) {
                 <group>
                   {branchGeos.guardrailLeftGeo && (
                     <TrimeshColliderWrap enabled={enablePhysics} geo={branchGeos.guardrailLeftGeo} surface="WALL">
-                      <mesh geometry={branchGeos.guardrailLeftGeo} castShadow receiveShadow>
+                      <mesh geometry={branchGeos.guardrailLeftGeo} receiveShadow>
                         <meshStandardMaterial color={wallColor} roughness={0.3} metalness={0.08} side={THREE.DoubleSide} />
                       </mesh>
                     </TrimeshColliderWrap>
                   )}
                   {branchGeos.guardrailRightGeo && (
                     <TrimeshColliderWrap enabled={enablePhysics} geo={branchGeos.guardrailRightGeo} surface="WALL">
-                      <mesh geometry={branchGeos.guardrailRightGeo} castShadow receiveShadow>
+                      <mesh geometry={branchGeos.guardrailRightGeo} receiveShadow>
                         <meshStandardMaterial color={wallColor} roughness={0.3} metalness={0.08} side={THREE.DoubleSide} />
                       </mesh>
                     </TrimeshColliderWrap>
@@ -2660,7 +2691,7 @@ function disposeGeometriesIn(obj: object | null | undefined) {
           {showGuardrails && (
             <group>
               <TrimeshColliderWrap enabled={enablePhysics} geo={geometries.guardrailLeftGeo} surface="WALL">
-                <mesh geometry={geometries.guardrailLeftGeo} castShadow receiveShadow>
+                <mesh geometry={geometries.guardrailLeftGeo} receiveShadow>
                   <meshStandardMaterial
                     color={wallColor}
                     roughness={0.3}
@@ -2670,7 +2701,7 @@ function disposeGeometriesIn(obj: object | null | undefined) {
                 </mesh>
               </TrimeshColliderWrap>
               <TrimeshColliderWrap enabled={enablePhysics} geo={geometries.guardrailRightGeo} surface="WALL">
-                <mesh geometry={geometries.guardrailRightGeo} castShadow receiveShadow>
+                <mesh geometry={geometries.guardrailRightGeo} receiveShadow>
                   <meshStandardMaterial
                     color={wallColor}
                     roughness={0.3}
@@ -2733,7 +2764,7 @@ function disposeGeometriesIn(obj: object | null | undefined) {
       {!fusedNetwork && pitGeometries && (
         <group>
           <TrimeshColliderWrap enabled={enablePhysics} geo={pitGeometries.roadGeo} surface="TRACK">
-            <mesh geometry={pitGeometries.roadGeo} receiveShadow castShadow>
+            <mesh geometry={pitGeometries.roadGeo} receiveShadow>
               <meshStandardMaterial
                 color={asphaltColor}
                 roughness={0.7}
@@ -2755,12 +2786,12 @@ function disposeGeometriesIn(obj: object | null | undefined) {
             </mesh>
           </TrimeshColliderWrap>
           <TrimeshColliderWrap enabled={enablePhysics} geo={pitGeometries.pitOuterWallGeo} surface="WALL">
-            <mesh geometry={pitGeometries.pitOuterWallGeo} castShadow receiveShadow>
+            <mesh geometry={pitGeometries.pitOuterWallGeo} receiveShadow>
               <meshStandardMaterial color={wallColor} roughness={0.3} metalness={0.08} side={THREE.DoubleSide} />
             </mesh>
           </TrimeshColliderWrap>
           <TrimeshColliderWrap enabled={enablePhysics} geo={pitGeometries.dividerWallGeo} surface="WALL">
-            <mesh geometry={pitGeometries.dividerWallGeo} castShadow receiveShadow>
+            <mesh geometry={pitGeometries.dividerWallGeo} receiveShadow>
               <meshStandardMaterial color={wallColor} roughness={0.3} metalness={0.08} side={THREE.DoubleSide} />
             </mesh>
           </TrimeshColliderWrap>
@@ -2772,26 +2803,13 @@ function disposeGeometriesIn(obj: object | null | undefined) {
         {(() => {
           const span = geometries.startPostOffsetL - geometries.startPostOffsetR;
           const midX = (geometries.startPostOffsetL + geometries.startPostOffsetR) * 0.5;
-          const sqCount = Math.max(8, Math.round(geometries.startRoadWidth / 1.1));
-          const sqW = geometries.startRoadWidth / sqCount;
           return (
             <>
-              {/* Linha da Meta Axadrezada */}
-              {Array.from({ length: sqCount }).map((_, idx) => {
-                const x = -geometries.startRoadWidth / 2 + sqW * (idx + 0.5);
-                return (
-                  <React.Fragment key={`chk_${idx}`}>
-                    <mesh position={[x, -0.05, -0.55]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-                      <planeGeometry args={[sqW, 1.1]} />
-                      <meshStandardMaterial color={idx % 2 === 0 ? '#ffffff' : '#111827'} roughness={0.6} />
-                    </mesh>
-                    <mesh position={[x, -0.05, 0.55]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-                      <planeGeometry args={[sqW, 1.1]} />
-                      <meshStandardMaterial color={idx % 2 === 0 ? '#111827' : '#ffffff'} roughness={0.6} />
-                    </mesh>
-                  </React.Fragment>
-                );
-              })}
+              {/* Linha da Meta Axadrezada (Single Draw Call) */}
+              <mesh position={[0, -0.04, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+                <planeGeometry args={[geometries.startRoadWidth, 2.2]} />
+                <meshStandardMaterial map={finishLineTex} roughness={0.6} polygonOffset polygonOffsetFactor={-2} />
+              </mesh>
 
               {/* Postes Laterais FORA dos Muros */}
               <mesh position={[geometries.startPostOffsetL, 3.4, 0]} castShadow receiveShadow>

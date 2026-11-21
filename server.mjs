@@ -22,7 +22,11 @@ const MIME_TYPES = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
+  '.jfif': 'image/jpeg',
   '.webp': 'image/webp',
+  '.avif': 'image/avif',
+  '.gif': 'image/gif',
+  '.bmp': 'image/bmp',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
   '.wasm': 'application/wasm',
@@ -176,15 +180,24 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 400, { error: 'Missing dataUrl' });
         return;
       }
-      const matches = dataUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+      const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
       if (!matches || matches.length !== 3) {
         sendJson(res, 400, { error: 'Invalid dataUrl format' });
         return;
       }
-      const ext = matches[1].includes('png')
+      const mimeType = matches[1].toLowerCase();
+      const ext = mimeType.includes('svg')
+        ? '.svg'
+        : mimeType.includes('png')
         ? '.png'
-        : matches[1].includes('webp')
+        : mimeType.includes('webp')
         ? '.webp'
+        : mimeType.includes('avif')
+        ? '.avif'
+        : mimeType.includes('gif')
+        ? '.gif'
+        : mimeType.includes('bmp')
+        ? '.bmp'
         : '.jpg';
       const cleanBase = (fileName || 'map')
         .replace(/\.[^/.]+$/, '')

@@ -1025,7 +1025,6 @@ export const Scenery3D: React.FC<Scenery3DProps> = React.memo(({
           ref={trunksRef}
           args={[treeBaseGeos.trunkGeo, undefined, totalTreesCount]}
           frustumCulled={false}
-          receiveShadow
         >
           <meshStandardMaterial color="#5c4033" roughness={0.9} />
         </instancedMesh>
@@ -1036,7 +1035,6 @@ export const Scenery3D: React.FC<Scenery3DProps> = React.memo(({
           ref={pinesRef}
           args={[treeBaseGeos.pineCanopyGeo, undefined, builtScenery.pineTrees.length]}
           frustumCulled={false}
-          receiveShadow
         >
           <meshStandardMaterial color="#ffffff" roughness={0.85} />
         </instancedMesh>
@@ -1047,7 +1045,6 @@ export const Scenery3D: React.FC<Scenery3DProps> = React.memo(({
           ref={leavesRef}
           args={[treeBaseGeos.leafCanopyGeo, undefined, builtScenery.leafTrees.length]}
           frustumCulled={false}
-          receiveShadow
         >
           <meshStandardMaterial color="#ffffff" roughness={0.85} />
         </instancedMesh>
@@ -1072,7 +1069,7 @@ export const Scenery3D: React.FC<Scenery3DProps> = React.memo(({
         </mesh>
       )}
       {builtScenery.pitBoxesGeo && (
-        <mesh geometry={builtScenery.pitBoxesGeo} castShadow receiveShadow>
+        <mesh geometry={builtScenery.pitBoxesGeo} receiveShadow>
           <meshStandardMaterial vertexColors roughness={0.5} metalness={0.18} />
         </mesh>
       )}

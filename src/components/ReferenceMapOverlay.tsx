@@ -28,7 +28,15 @@ export const ReferenceMapOverlay: React.FC<ReferenceMapOverlayProps> = React.mem
   const texture = useMemo(() => {
     if (!imageUrl) return null;
     const loader = new THREE.TextureLoader();
-    const tex = loader.load(imageUrl);
+    const tex = loader.load(
+      imageUrl,
+      undefined,
+      undefined,
+      () => {
+        console.warn('Failed to load reference map:', imageUrl);
+      }
+    );
+    tex.colorSpace = THREE.SRGBColorSpace;
     tex.wrapS = THREE.ClampToEdgeWrapping;
     tex.wrapT = THREE.ClampToEdgeWrapping;
     return tex;

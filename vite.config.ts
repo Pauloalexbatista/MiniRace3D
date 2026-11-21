@@ -120,13 +120,26 @@ function circuitsApiPlugin(): Plugin {
                 res.end(JSON.stringify({ error: 'Missing dataUrl' }));
                 return;
               }
-              const matches = dataUrl.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+              const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
               if (!matches || matches.length !== 3) {
                 res.statusCode = 400;
                 res.end(JSON.stringify({ error: 'Invalid dataUrl format' }));
                 return;
               }
-              const ext = matches[1].includes('png') ? '.png' : matches[1].includes('webp') ? '.webp' : '.jpg';
+              const mimeType = matches[1].toLowerCase();
+              const ext = mimeType.includes('svg')
+                ? '.svg'
+                : mimeType.includes('png')
+                ? '.png'
+                : mimeType.includes('webp')
+                ? '.webp'
+                : mimeType.includes('avif')
+                ? '.avif'
+                : mimeType.includes('gif')
+                ? '.gif'
+                : mimeType.includes('bmp')
+                ? '.bmp'
+                : '.jpg';
               const cleanBase = (fileName || 'map')
                 .replace(/\.[^/.]+$/, '')
                 .toLowerCase()

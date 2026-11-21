@@ -25,6 +25,7 @@ interface BotRuntime {
   targetLaneOffset: number;
   steerVisual: number;
   wheelRoll: number;
+  isBraking: boolean;
   lapNumber: number;
   completedLaps: number;
   lapStartMs: number;
@@ -57,6 +58,7 @@ export interface AIRacerManagerProps {
   localCarPosRef: React.MutableRefObject<LocalCarNetSample | null>;
   remoteCarsRef: React.MutableRefObject<Map<string, RemoteCarBufferEntry>>;
   standingsMap?: Record<string, number>;
+  environmentTheme?: 'day' | 'sunset' | 'night';
   onAiStatesUpdate: (states: NetCarState[]) => void;
 }
 
@@ -71,11 +73,13 @@ export const AIRacerManager: React.FC<AIRacerManagerProps> = React.memo(({
   localCarPosRef,
   remoteCarsRef,
   standingsMap,
+  environmentTheme = 'day',
   onAiStatesUpdate,
 }) => {
   const rbRefs = useRef<(RapierRigidBody | null)[]>([]);
   const steerRefs = useRef<React.MutableRefObject<number>[]>([]);
   const rollRefs = useRef<React.MutableRefObject<number>[]>([]);
+  const brakeRefs = useRef<React.MutableRefObject<number>[]>([]);
   const emitAccRef = useRef(0);
   const raceStartPerfRef = useRef<number>(raceGoTimestampMs || performance.now());
   const prevPhaseRef = useRef<string>(racePhase);
@@ -128,6 +132,7 @@ export const AIRacerManager: React.FC<AIRacerManagerProps> = React.memo(({
   if (steerRefs.current.length !== aiRacers.length) {
     steerRefs.current = aiRacers.map(() => ({ current: 0 }));
     rollRefs.current = aiRacers.map(() => ({ current: 0 }));
+    brakeRefs.current = aiRacers.map(() => ({ current: 0 }));
   }
   if (velRefs.current.length !== aiRacers.length) {
     velRefs.current = aiRacers.map(() => ({ x: 0, y: 0, z: 0 }));
@@ -178,6 +183,7 @@ export const AIRacerManager: React.FC<AIRacerManagerProps> = React.memo(({
           targetLaneOffset: clampedLane,
           steerVisual: existingRemote.steer || 0,
           wheelRoll: existingRemote.wheelRoll || 0,
+          isBraking: Boolean(existingRemote.braking),
           lapNumber: existingRemote.lapNumber || 1,
           completedLaps: existingRemote.completedLaps || 0,
           lapStartMs: performance.now(),
@@ -212,6 +218,7 @@ export const AIRacerManager: React.FC<AIRacerManagerProps> = React.memo(({
         targetLaneOffset: pose.latOffset,
         steerVisual: 0,
         wheelRoll: 0,
+        isBraking: false,
         lapNumber: 1,
         completedLaps: 0,
         lapStartMs: performance.now(),
@@ -288,6 +295,7 @@ export const AIRacerManager: React.FC<AIRacerManagerProps> = React.memo(({
       if (!heldOnGrid && elapsedSinceGoSec >= bot.reactionDelaySec) {
         if (bot.finished) {
           // Coast smoothly after finishing
+          bot.isBraking = bot.speedMs > 1.5;
           bot.speedMs = Math.max(0, bot.speedMs - 18 * dt);
         } else {
           // Look ahead along speedProfile
@@ -343,6 +351,7 @@ export const AIRacerManager: React.FC<AIRacerManagerProps> = React.memo(({
           );
           bot.laneOffset = THREE.MathUtils.lerp(bot.laneOffset, bot.targetLaneOffset, Math.min(1, dt * 3.5));
 
+          bot.isBraking = bot.speedMs > targetSpeed + 0.8;
           const accel = def.accelForce * 0.88 * bot.cfg.skill;
           const brake = def.accelForce * (def.brakeForce || 1.5) * 0.95;
           if (bot.speedMs < targetSpeed) {
@@ -386,6 +395,8 @@ export const AIRacerManager: React.FC<AIRacerManagerProps> = React.memo(({
             bot.lapStartMs = nowPerf;
           }
         }
+      } else {
+        bot.isBraking = false;
       }
 
       // Compute 3D road pose with slope pitch + banking roll
@@ -436,6 +447,13 @@ export const AIRacerManager: React.FC<AIRacerManagerProps> = React.memo(({
 
       if (steerRefs.current[i]) steerRefs.current[i].current = bot.steerVisual;
       if (rollRefs.current[i]) rollRefs.current[i].current = bot.wheelRoll;
+      if (brakeRefs.current[i]) {
+        brakeRefs.current[i].current = THREE.MathUtils.lerp(
+          brakeRefs.current[i].current,
+          bot.isBraking ? 1 : 0,
+          Math.min(1, dt * 16)
+        );
+      }
 
       const rb = rbRefs.current[i];
       if (rb) {
@@ -463,6 +481,8 @@ export const AIRacerManager: React.FC<AIRacerManagerProps> = React.memo(({
         steer: b.steerVisual,
         speedKmh: Math.round(b.speedMs * 3.6),
         wheelRoll: b.wheelRoll,
+        braking: b.isBraking,
+        headlights: true,
         lapNumber: b.lapNumber,
         completedLaps: b.completedLaps,
         trackS: b.s,
@@ -509,6 +529,10 @@ export const AIRacerManager: React.FC<AIRacerManagerProps> = React.memo(({
                 rotation={ZERO_VEC3}
                 steerAngleRef={steerRefs.current[idx]}
                 wheelRotationRef={rollRefs.current[idx]}
+                brakeIntensityRef={brakeRefs.current[idx]}
+                headlightsOn={true}
+                enableRealLights={false}
+                environmentTheme={environmentTheme}
                 color={bot.primaryColor}
                 secondaryColor={bot.secondaryColor}
                 carClass={bot.carClass}

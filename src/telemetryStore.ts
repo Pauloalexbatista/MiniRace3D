@@ -8,6 +8,8 @@ export interface TelemetryData {
   throttle: number;
   brake: number;
   steer: number;
+  headlightsOn: boolean;
+  isBraking: boolean;
   surface: SurfaceType;
   surfacePenaltyPct: number;
   engineHealth: number;
@@ -32,6 +34,8 @@ export const DEFAULT_TELEMETRY: TelemetryData = {
   throttle: 0,
   brake: 0,
   steer: 0,
+  headlightsOn: true,
+  isBraking: false,
   surface: 'TRACK',
   surfacePenaltyPct: 0,
   engineHealth: 100,
