@@ -15,6 +15,9 @@ import type {
 } from '../multiplayer/types';
 
 const ZERO_VEC3: [number, number, number] = [0, 0, 0];
+const BOT_COLLIDER_ARGS: [number, number, number] = [0.92, 0.24, 1.90];
+const BOT_COLLIDER_POS: [number, number, number] = [0, 0.96, 0.05];
+const BOT_VISUAL_POS: [number, number, number] = [0, 0.02, 0];
 
 interface BotRuntime {
   cfg: AiRacerConfig;
@@ -518,12 +521,12 @@ export const AIRacerManager: React.FC<AIRacerManagerProps> = React.memo(({
             userData={bodyUserDatas[idx]}
           >
             <CuboidCollider
-              args={[0.92, 0.24, 1.90]}
-              position={[0, 0.96, 0.05]}
+              args={BOT_COLLIDER_ARGS}
+              position={BOT_COLLIDER_POS}
               friction={0.0}
               restitution={0.12}
             />
-            <group position={[0, 0.02, 0]}>
+            <group position={BOT_VISUAL_POS}>
               <Car3D
                 position={ZERO_VEC3}
                 rotation={ZERO_VEC3}

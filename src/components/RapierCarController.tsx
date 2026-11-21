@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useMemo } from 'react';
+import React, { useRef, useEffect, useMemo, useCallback } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { RigidBody, CuboidCollider, useRapier, useBeforePhysicsStep, RapierRigidBody, CollisionEnterPayload } from '@react-three/rapier';
@@ -10,6 +10,10 @@ import { publishTelemetry, TelemetryData, PitStopStatus, RaceStartPhase, registe
 import type { LocalCarNetSample } from '../multiplayer/types';
 
 const ZERO_VEC3: [number, number, number] = [0, 0, 0];
+const CAR_RIGIDBODY_USER_DATA = { surface: 'CAR' };
+const CHASSIS_COLLIDER_ARGS: [number, number, number] = [0.92, 0.24, 1.90];
+const CHASSIS_COLLIDER_POS: [number, number, number] = [0, 0.96, 0.05];
+const VISUAL_GROUP_POS: [number, number, number] = [0, 0.02, 0];
 
 const SURFACE_TIER: Record<SurfaceType, number> = {
   TRACK: 0,
@@ -748,7 +752,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
     clearSkidMarks();
   }, [spline]);
 
-  const handleCollisionEnter = (payload: CollisionEnterPayload) => {
+  const handleCollisionEnter = useCallback((payload: CollisionEnterPayload) => {
     const otherUserData = payload.other.rigidBody?.userData as
       | { surface?: string; vel?: { x: number; y: number; z: number } }
       | undefined;
@@ -785,7 +789,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
       lastWallCollisionTimeRef.current = now;
       lastCollisionTimeRef.current = now;
     }
-  };
+  }, []);
 
   useBeforePhysicsStep(() => {
     const rb = rbRef.current;
@@ -1223,8 +1227,14 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
           if (manualBrake < driveAccel) driveAccel = manualBrake;
         }
       } else {
-        if (throttle > 0 && absFwd < activeCapMs) {
-          driveAccel = throttle * presetConfig.accelForce * engineAccelMult * tireAccelMult;
+        if (throttle > 0) {
+          const maxDriveAccel = throttle * presetConfig.accelForce * engineAccelMult * tireAccelMult;
+          if (forwardSpeed < activeCapMs) {
+            const capAccel = Math.max(0, (activeCapMs - forwardSpeed) * 6.0 + Math.max(0, forwardSpeed) * 0.25);
+            driveAccel = Math.min(maxDriveAccel, capAccel);
+          } else {
+            driveAccel = Math.max(-18, (activeCapMs - forwardSpeed) * 3.0);
+          }
         } else if (brake > 0) {
           if (forwardSpeed > 1.5) {
             driveAccel = -brake * presetConfig.accelForce * presetConfig.brakeForce * tireBrakeMult;
@@ -1235,7 +1245,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
         if (handbrake && forwardSpeed > 1.5) {
           driveAccel -= presetConfig.accelForce * 0.65 * tireBrakeMult;
         }
-        if (currentTier === 0 && speedKmh > effectiveMaxSpeedKmh + 1) {
+        if (currentTier === 0 && throttle === 0 && speedKmh > effectiveMaxSpeedKmh + 1) {
           driveAccel -= (speedKmh - effectiveMaxSpeedKmh) * 0.35;
         }
         // Rolling resistance & aerodynamic drag when coasting
@@ -1736,17 +1746,17 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
         linearDamping={0.25}
         angularDamping={1.0}
         ccd={true}
-        userData={{ surface: 'CAR' }}
+        userData={CAR_RIGIDBODY_USER_DATA}
         onCollisionEnter={handleCollisionEnter}
       >
         {/* Full-body chassis collider (raised and frictionless so it never snags on trimesh seams) */}
         <CuboidCollider
-          args={[0.92, 0.24, 1.90]}
-          position={[0, 0.96, 0.05]}
+          args={CHASSIS_COLLIDER_ARGS}
+          position={CHASSIS_COLLIDER_POS}
           friction={0.0}
           restitution={0.05}
         />
-        <group ref={visualGroupRef} position={[0, 0.02, 0]}>
+        <group ref={visualGroupRef} position={VISUAL_GROUP_POS}>
           <Car3D
             position={ZERO_VEC3}
             rotation={ZERO_VEC3}

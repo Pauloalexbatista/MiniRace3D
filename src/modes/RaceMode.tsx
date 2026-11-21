@@ -68,6 +68,8 @@ const SAVED_CIRCUITS_STORAGE_KEY = 'minirace3d_saved_circuits';
 const VALID_CAR_CLASSES: CarClass[] = ['f1', 'gt', 'rally', 'drift'];
 const EMPTY_PATCHES: SceneryPatch[] = [];
 const EMPTY_BRANCHES: RoadBranch[] = [];
+const PHYSICS_GRAVITY: [number, number, number] = [0, -24, 0];
+const SAFETY_FLOOR_ARGS: [number, number, number] = [10000, 1, 10000];
 
 const SOLO_AI_TEMPLATES = [
   { name: 'M. Verstappen', primaryColor: '#1e3a8a', secondaryColor: '#ef4444' },
@@ -252,6 +254,7 @@ export const RaceMode: React.FC<RaceModeProps> = ({
   onBackToHome,
   onGoToEditor,
 }) => {
+  const { joinRoom, sendSceneReady, sendCarState, sendAiStates } = raceClient;
   const [circuits, setCircuits] = useState<CircuitOption[]>([]);
   const [driverProfile, setDriverProfile] = useState<DriverProfile>(loadInitialProfile);
   const [raceTunings, setRaceTunings] = useState<Record<CarClass, CarTuning>>(() =>
@@ -287,6 +290,7 @@ export const RaceMode: React.FC<RaceModeProps> = ({
   });
 
   const localCarSampleRef = useRef<LocalCarNetSample | null>(null);
+  const localFinishedRef = useRef<boolean>(false);
   const hostAiStatesRef = useRef<NetCarState[]>([]);
   const soloAiFinishOrderRef = useRef<Map<string, number>>(new Map());
   const soloFinishCounterRef = useRef<number>(0);
@@ -394,10 +398,10 @@ export const RaceMode: React.FC<RaceModeProps> = ({
       autoJoinedCodeRef.current !== initialRoomCode
     ) {
       autoJoinedCodeRef.current = initialRoomCode;
-      raceClient.joinRoom(initialRoomCode, driverProfile);
+      joinRoom(initialRoomCode, driverProfile);
       onClearInitialRoomCode?.();
     }
-  }, [initialRoomCode, raceClient.connectionState, raceClient.currentRoom, soloSession, driverProfile, raceClient, onClearInitialRoomCode]);
+  }, [initialRoomCode, raceClient.connectionState, raceClient.currentRoom, soloSession, driverProfile, joinRoom, onClearInitialRoomCode]);
 
   const currentRoom = raceClient.currentRoom;
   const isOnlineRacing = Boolean(currentRoom && currentRoom.status !== 'lobby');
@@ -491,11 +495,14 @@ export const RaceMode: React.FC<RaceModeProps> = ({
     };
   }, [currentSpline, activeRaceCircuit?.branches]);
 
+  const safetyFloorPos = useMemo<[number, number, number]>(() => [0, safetyFloorY - 1.0, 0], [safetyFloorY]);
+
   // Reset per-race local refs whenever a new race mounts
   useEffect(() => {
     if (!isActiveRace) {
       setRacePhase('loading');
       setLightsLit(0);
+      localFinishedRef.current = false;
       setLocalSampleSnap({ finished: false, finishTimeMs: null });
       localCarSampleRef.current = null;
       hostAiStatesRef.current = [];
@@ -505,6 +512,7 @@ export const RaceMode: React.FC<RaceModeProps> = ({
     setCameraMode('chase');
     setRacePhase('loading');
     setLightsLit(0);
+    localFinishedRef.current = false;
     setLocalSampleSnap({ finished: false, finishTimeMs: null });
     localCarSampleRef.current = null;
     hostAiStatesRef.current = [];
@@ -533,24 +541,33 @@ export const RaceMode: React.FC<RaceModeProps> = ({
     }
 
     let rafId = 0;
+    let lastPhase = '';
+    let lastLit = -1;
+    const setPhaseIfChanged = (phase: 'ready' | 'lights' | 'green' | 'racing', lit: number) => {
+      if (phase !== lastPhase) {
+        lastPhase = phase;
+        setRacePhase(phase);
+      }
+      if (lit !== lastLit) {
+        lastLit = lit;
+        setLightsLit(lit);
+      }
+    };
+
     const tickCountdown = () => {
       const now = performance.now();
       const { countdownStartLocalMs, raceGoLocalMs } = activeSync;
 
       if (now < countdownStartLocalMs) {
-        setRacePhase('ready');
-        setLightsLit(0);
+        setPhaseIfChanged('ready', 0);
       } else if (now < raceGoLocalMs) {
         const elapsed = now - countdownStartLocalMs;
         const lit = elapsed >= 1800 ? 3 : elapsed >= 900 ? 2 : 1;
-        setRacePhase('lights');
-        setLightsLit(lit);
+        setPhaseIfChanged('lights', lit);
       } else if (now < raceGoLocalMs + 1800) {
-        setRacePhase('green');
-        setLightsLit(0);
+        setPhaseIfChanged('green', 0);
       } else {
-        setRacePhase('racing');
-        setLightsLit(0);
+        setPhaseIfChanged('racing', 0);
         return; // Countdown complete
       }
       rafId = window.requestAnimationFrame(tickCountdown);
@@ -588,9 +605,9 @@ export const RaceMode: React.FC<RaceModeProps> = ({
         raceGoLocalMs: now + 3050,
       });
     } else {
-      raceClient.sendSceneReady();
+      sendSceneReady();
     }
-  }, [isSoloRacing, raceClient]);
+  }, [isSoloRacing, sendSceneReady]);
 
   const updateSoloStandingsIfDue = useCallback(
     (force = false) => {
@@ -697,7 +714,8 @@ export const RaceMode: React.FC<RaceModeProps> = ({
   const handleLocalCarSample = useCallback(
     (sample: LocalCarNetSample) => {
       localCarSampleRef.current = sample;
-      if (sample.finished && !localSampleSnap.finished) {
+      if (sample.finished && !localFinishedRef.current) {
+        localFinishedRef.current = true;
         setLocalSampleSnap({ finished: true, finishTimeMs: sample.finishTimeMs });
         if (isSoloRacing && soloFinishTimerRef.current === null) {
           updateSoloStandingsIfDue(true);
@@ -711,10 +729,10 @@ export const RaceMode: React.FC<RaceModeProps> = ({
       if (isSoloRacing) {
         updateSoloStandingsIfDue(false);
       } else {
-        raceClient.sendCarState(sample);
+        sendCarState(sample);
       }
     },
-    [isSoloRacing, localSampleSnap.finished, raceClient, updateSoloStandingsIfDue]
+    [isSoloRacing, sendCarState, updateSoloStandingsIfDue]
   );
 
   const handleAiStatesUpdate = useCallback(
@@ -723,10 +741,10 @@ export const RaceMode: React.FC<RaceModeProps> = ({
       if (isSoloRacing) {
         updateSoloStandingsIfDue(false);
       } else if (isHost) {
-        raceClient.sendAiStates(states);
+        sendAiStates(states);
       }
     },
-    [isSoloRacing, isHost, raceClient, updateSoloStandingsIfDue]
+    [isSoloRacing, isHost, sendAiStates, updateSoloStandingsIfDue]
   );
 
   useEffect(() => {
@@ -743,13 +761,24 @@ export const RaceMode: React.FC<RaceModeProps> = ({
     ? raceClient.finalStandings
     : raceClient.standings;
 
+  const prevStandingsRankMapRef = useRef<Record<string, number>>({});
   const standingsRankMap = useMemo(() => {
     const m: Record<string, number> = {};
     for (const s of activeStandings) {
       m[s.id] = s.position;
     }
+    const prev = prevStandingsRankMapRef.current;
+    const prevKeys = Object.keys(prev);
+    const nextKeys = Object.keys(m);
+    if (prevKeys.length === nextKeys.length && nextKeys.every((k) => prev[k] === m[k])) {
+      return prev;
+    }
+    prevStandingsRankMapRef.current = m;
     return m;
   }, [activeStandings]);
+
+  const standingsRankMapRef = useRef<Record<string, number>>(standingsRankMap);
+  standingsRankMapRef.current = standingsRankMap;
 
   const standingsById = useMemo(() => {
     const m: Record<string, RaceStandingEntry> = {};
@@ -759,35 +788,53 @@ export const RaceMode: React.FC<RaceModeProps> = ({
     return m;
   }, [activeStandings]);
 
+  const { cachedGridPoses, cachedRemotePosesF1, cachedRemotePosesOther } = useMemo(() => {
+    const isClosedFlag = activeRaceCircuit?.isClosed ?? true;
+    const poses = Array.from({ length: 12 }, (_, slot) =>
+      computeGridSlotPose(currentSpline, isClosedFlag, slot)
+    );
+    const f1Poses = poses.map((sp) => ({
+      pos: [sp.x, sp.y + 0.04, sp.z] as [number, number, number],
+      yaw: sp.yaw,
+    }));
+    const otherPoses = poses.map((sp) => ({
+      pos: [sp.x, sp.y + 0.01, sp.z] as [number, number, number],
+      yaw: sp.yaw,
+    }));
+    return {
+      cachedGridPoses: poses,
+      cachedRemotePosesF1: f1Poses,
+      cachedRemotePosesOther: otherPoses,
+    };
+  }, [currentSpline, activeRaceCircuit?.isClosed]);
+
   // 60ms Minimap dots aggregation (updates ref directly, zero React re-renders!)
   useEffect(() => {
     if (!isActiveRace || currentSpline.length < 2) return;
-    const isClosed = activeRaceCircuit?.isClosed ?? true;
 
     const timer = window.setInterval(() => {
+      const rankMap = standingsRankMapRef.current;
       const dots: MinimapDriverDot[] = [];
       const localS = localCarSampleRef.current;
-      const myPos = localS
-        ? { x: localS.x, z: localS.z }
-        : computeGridSlotPose(currentSpline, isClosed, myGridSlot);
+      const myFallback = cachedGridPoses[Math.max(0, Math.min(11, myGridSlot))] ?? cachedGridPoses[0];
 
       dots.push({
         id: myDriverId,
-        x: myPos.x,
-        z: myPos.z,
+        x: localS ? localS.x : myFallback.x,
+        z: localS ? localS.z : myFallback.z,
         color: myPrimaryColor,
         isMe: true,
         isAi: false,
         connected: true,
         finished: Boolean(localS?.finished),
-        position: standingsRankMap[myDriverId] || myGridSlot + 1,
+        position: rankMap[myDriverId] || myGridSlot + 1,
       });
 
       if (isOnlineRacing && currentRoom) {
         for (const p of currentRoom.players) {
           if (p.id === myDriverId) continue;
           const remote = raceClient.remoteCarsRef.current.get(p.id)?.curr;
-          const fallback = computeGridSlotPose(currentSpline, isClosed, p.gridSlot);
+          const fallback = remote ?? cachedGridPoses[Math.max(0, Math.min(11, p.gridSlot))] ?? cachedGridPoses[0];
           dots.push({
             id: p.id,
             x: remote ? remote.x : fallback.x,
@@ -797,7 +844,7 @@ export const RaceMode: React.FC<RaceModeProps> = ({
             isAi: false,
             connected: p.connected,
             finished: Boolean(remote?.finished),
-            position: standingsRankMap[p.id] || p.gridSlot + 1,
+            position: rankMap[p.id] || p.gridSlot + 1,
           });
         }
       }
@@ -809,7 +856,7 @@ export const RaceMode: React.FC<RaceModeProps> = ({
         const hostSt = isSoloRacing || isHost ? aiMap.get(bot.id) : undefined;
         const remoteSt = !hostSt ? raceClient.remoteCarsRef.current.get(bot.id)?.curr : undefined;
         const st = hostSt || remoteSt;
-        const fallback = computeGridSlotPose(currentSpline, isClosed, bot.gridSlot);
+        const fallback = st ?? cachedGridPoses[Math.max(0, Math.min(11, bot.gridSlot))] ?? cachedGridPoses[0];
         dots.push({
           id: bot.id,
           x: st ? st.x : fallback.x,
@@ -819,7 +866,7 @@ export const RaceMode: React.FC<RaceModeProps> = ({
           isAi: true,
           connected: true,
           finished: Boolean(st?.finished),
-          position: standingsRankMap[bot.id] || bot.gridSlot + 1,
+          position: rankMap[bot.id] || bot.gridSlot + 1,
         });
       }
 
@@ -835,12 +882,12 @@ export const RaceMode: React.FC<RaceModeProps> = ({
     currentRoom,
     activeRaceCircuit,
     currentSpline,
+    cachedGridPoses,
     myDriverId,
     myGridSlot,
     myPrimaryColor,
     activeAiRacers,
     raceClient.remoteCarsRef,
-    standingsRankMap,
   ]);
 
   const selectedCreateCircuit = useMemo(
@@ -1175,9 +1222,9 @@ export const RaceMode: React.FC<RaceModeProps> = ({
               groundY={groundY}
             />
 
-            <Physics gravity={[0, -24, 0]} timeStep={1 / 60} interpolate={true}>
+            <Physics gravity={PHYSICS_GRAVITY} timeStep={1 / 60} interpolate={true}>
               <RigidBody type="fixed" friction={0.05} restitution={0.05}>
-                <CuboidCollider args={[10000, 1, 10000]} position={[0, safetyFloorY - 1.0, 0]} />
+                <CuboidCollider args={SAFETY_FLOOR_ARGS} position={safetyFloorPos} />
               </RigidBody>
 
               <Track3D
@@ -1228,7 +1275,8 @@ export const RaceMode: React.FC<RaceModeProps> = ({
                 currentRoom?.players
                   .filter((p) => p.id !== myDriverId)
                   .map((p) => {
-                    const slotPose = computeGridSlotPose(currentSpline, isClosed, p.gridSlot);
+                    const slotIdx = Math.max(0, Math.min(11, p.gridSlot));
+                    const initPose = p.carClass === 'f1' ? cachedRemotePosesF1[slotIdx] : cachedRemotePosesOther[slotIdx];
                     const st = standingsById[p.id];
                     return (
                       <RemoteCar3D
@@ -1238,10 +1286,7 @@ export const RaceMode: React.FC<RaceModeProps> = ({
                         carClass={p.carClass}
                         primaryColor={p.primaryColor}
                         secondaryColor={p.secondaryColor}
-                        initialPose={{
-                          pos: [slotPose.x, slotPose.y + (p.carClass === 'f1' ? 0.04 : 0.01), slotPose.z],
-                          yaw: slotPose.yaw,
-                        }}
+                        initialPose={initPose}
                         remoteCarsRef={raceClient.remoteCarsRef}
                         positionRank={st?.position}
                         isAi={false}
@@ -1262,7 +1307,7 @@ export const RaceMode: React.FC<RaceModeProps> = ({
                   totalLaps={activeTotalLaps}
                   speedPreset={activeSpeedPreset}
                   racePhase={racePhase}
-                  raceGoTimestampMs={activeSync?.raceGoLocalMs || performance.now()}
+                  raceGoTimestampMs={activeSync?.raceGoLocalMs ?? 0}
                   localCarPosRef={localCarSampleRef}
                   remoteCarsRef={raceClient.remoteCarsRef}
                   standingsMap={standingsRankMap}
@@ -1273,7 +1318,8 @@ export const RaceMode: React.FC<RaceModeProps> = ({
 
               {!isAiAuthority &&
                 activeAiRacers.map((bot) => {
-                  const slotPose = computeGridSlotPose(currentSpline, isClosed, bot.gridSlot);
+                  const slotIdx = Math.max(0, Math.min(11, bot.gridSlot));
+                  const initPose = bot.carClass === 'f1' ? cachedRemotePosesF1[slotIdx] : cachedRemotePosesOther[slotIdx];
                   const st = standingsById[bot.id];
                   return (
                     <RemoteCar3D
@@ -1283,7 +1329,7 @@ export const RaceMode: React.FC<RaceModeProps> = ({
                       carClass={bot.carClass}
                       primaryColor={bot.primaryColor}
                       secondaryColor={bot.secondaryColor}
-                      initialPose={{ pos: [slotPose.x, slotPose.y + 0.04, slotPose.z], yaw: slotPose.yaw }}
+                      initialPose={initPose}
                       remoteCarsRef={raceClient.remoteCarsRef}
                       positionRank={st?.position}
                       isAi={true}

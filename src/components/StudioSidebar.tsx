@@ -1,5 +1,13 @@
-import React, { useState } from 'react';
-import { SplineNode, SavedCircuit, SprayCanType, RoadBranch } from '../tracks';
+import React, { useState, useEffect } from 'react';
+import {
+  SplineNode,
+  SavedCircuit,
+  SprayCanType,
+  RoadBranch,
+  parseTrackLengthKmInput,
+  MIN_TRACK_LENGTH_KM,
+  MAX_TRACK_LENGTH_KM
+} from '../tracks';
 import { getZone, ZONE_KEYS, ZONE_DEFAULTS, ZoneKey } from '../trackCorridor';
 import { CarClass } from './Car3D';
 import { CAR_CLASS_DEFAULTS, CarTuning } from './RapierCarController';
@@ -135,6 +143,17 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
   const [scaleInputKm, setScaleInputKm] = useState<string>(
     props.trackLength > 0 ? (props.trackLength / 1000).toFixed(2) : '4.50'
   );
+
+  useEffect(() => {
+    if (props.trackLength > 0) {
+      setScaleInputKm((props.trackLength / 1000).toFixed(2));
+    }
+  }, [props.trackLength]);
+
+  const applyScaleInput = () => {
+    const km = parseTrackLengthKmInput(scaleInputKm);
+    if (km > 0) props.onScaleTrack(km);
+  };
 
   if (!props.isOpen) return null;
 
@@ -871,12 +890,14 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
                 <input
-                  type="number"
-                  step="0.05"
-                  min="0.5"
-                  max="30"
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="Ex: 3.34"
                   value={scaleInputKm}
                   onChange={(e) => setScaleInputKm(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') applyScaleInput();
+                  }}
                   style={{
                     width: 90,
                     background: '#0f172a',
@@ -891,10 +912,7 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
                 />
                 <span style={{ alignSelf: 'center', fontSize: 11, color: '#94a3b8' }}>km</span>
                 <button
-                  onClick={() => {
-                    const km = parseFloat(scaleInputKm);
-                    if (km > 0) props.onScaleTrack(km);
-                  }}
+                  onClick={applyScaleInput}
                   style={{
                     flex: 1,
                     background: '#0284c7',
@@ -909,6 +927,9 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
                 >
                   Escalar Circuito
                 </button>
+              </div>
+              <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 6 }}>
+                Em quilómetros (ex: 3.34 = 3340 m · limite {MIN_TRACK_LENGTH_KM}–{MAX_TRACK_LENGTH_KM} km)
               </div>
             </div>
 

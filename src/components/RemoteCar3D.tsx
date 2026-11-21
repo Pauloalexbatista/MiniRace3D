@@ -7,6 +7,9 @@ import { DriverNameplateSprite } from './DriverNameplate';
 import type { RemoteCarBufferEntry } from '../multiplayer/types';
 
 const ZERO_VEC3: [number, number, number] = [0, 0, 0];
+const REMOTE_COLLIDER_ARGS: [number, number, number] = [0.92, 0.24, 1.90];
+const REMOTE_COLLIDER_POS: [number, number, number] = [0, 0.96, 0.05];
+const REMOTE_VISUAL_POS: [number, number, number] = [0, 0.02, 0];
 
 export interface RemoteCar3DProps {
   driverId: string;
@@ -118,12 +121,12 @@ export const RemoteCar3D: React.FC<RemoteCar3DProps> = React.memo(({
       userData={bodyUserData}
     >
       <CuboidCollider
-        args={[0.92, 0.24, 1.90]}
-        position={[0, 0.96, 0.05]}
+        args={REMOTE_COLLIDER_ARGS}
+        position={REMOTE_COLLIDER_POS}
         friction={0.0}
         restitution={0.12}
       />
-      <group position={[0, 0.02, 0]}>
+      <group position={REMOTE_VISUAL_POS}>
         <Car3D
           position={ZERO_VEC3}
           rotation={ZERO_VEC3}

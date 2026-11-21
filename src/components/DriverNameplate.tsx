@@ -1,5 +1,8 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo } from 'react';
 import * as THREE from 'three';
+
+const NAMEPLATE_POS: [number, number, number] = [0, 2.85, 0];
+const NAMEPLATE_SCALE: [number, number, number] = [5.8, 1.35, 1];
 
 export interface DriverNameplateProps {
   name: string;
@@ -20,10 +23,15 @@ export const DriverNameplateSprite: React.FC<DriverNameplateProps> = React.memo(
   finished = false,
   connected = true,
 }) => {
-  const texture = useMemo(() => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 512;
-    canvas.height = 120;
+  const { canvas, texture } = useMemo(() => {
+    const c = document.createElement('canvas');
+    c.width = 512;
+    c.height = 120;
+    const tex = new THREE.CanvasTexture(c);
+    return { canvas: c, texture: tex };
+  }, []);
+
+  useLayoutEffect(() => {
     const ctx = canvas.getContext('2d');
     if (ctx) {
       ctx.clearRect(0, 0, 512, 120);
@@ -100,10 +108,8 @@ export const DriverNameplateSprite: React.FC<DriverNameplateProps> = React.memo(
       }
     }
 
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.needsUpdate = true;
-    return tex;
-  }, [name, primaryColor, positionRank, isAi, inPit, finished, connected]);
+    texture.needsUpdate = true;
+  }, [canvas, texture, name, primaryColor, positionRank, isAi, inPit, finished, connected]);
 
   useEffect(() => {
     return () => {
@@ -112,7 +118,7 @@ export const DriverNameplateSprite: React.FC<DriverNameplateProps> = React.memo(
   }, [texture]);
 
   return (
-    <sprite position={[0, 2.85, 0]} scale={[5.8, 1.35, 1]}>
+    <sprite position={NAMEPLATE_POS} scale={NAMEPLATE_SCALE}>
       <spriteMaterial map={texture} transparent depthTest={true} depthWrite={false} />
     </sprite>
   );

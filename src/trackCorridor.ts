@@ -167,6 +167,48 @@ export function computeCorridor(spline: SplineNode[], isClosed: boolean = true):
   const idx = (k: number) => (isClosed ? ((k % N) + N) % N : Math.max(0, Math.min(N - 1, k)));
   const totalLen = spline[N - 1].distFromStart ?? 0;
 
+  // Precompute lateral reaches and build a 2D spatial hash grid for O(N) neighbor lookup
+  const bLArr = new Float64Array(N);
+  const bRArr = new Float64Array(N);
+  const reachArr = new Float64Array(N);
+  let globalMaxReach = 40;
+  for (let i = 0; i < N; i++) {
+    const p = spline[i];
+    const hw = (p.width || 18) / 2;
+    const wTL = getZone(p, 'wallThickness', 'L');
+    const wTR = getZone(p, 'wallThickness', 'R');
+    wallTL[i] = wTL;
+    wallTR[i] = wTR;
+    const bL = bermaWidth(p, 'L');
+    const bR = bermaWidth(p, 'R');
+    bLArr[i] = bL;
+    bRArr[i] = bR;
+    const maxSideReach = hw + Math.max(bL + wTL, bR + wTR);
+    const reach = Math.max(hw + 30, maxSideReach * 2.15);
+    reachArr[i] = reach;
+    if (reach > globalMaxReach) globalMaxReach = reach;
+  }
+
+  const cellSize = Math.max(40, globalMaxReach);
+  const invCellSize = 1 / cellSize;
+  const grid = new Map<number, Map<number, number[]>>();
+  for (let j = 0; j < N; j++) {
+    const q = spline[j];
+    const gx = Math.floor(q.x * invCellSize);
+    const gy = Math.floor(q.y * invCellSize);
+    let col = grid.get(gx);
+    if (!col) {
+      col = new Map<number, number[]>();
+      grid.set(gx, col);
+    }
+    let cell = col.get(gy);
+    if (!cell) {
+      cell = [];
+      col.set(gy, cell);
+    }
+    cell.push(j);
+  }
+
   for (let i = 0; i < N; i++) {
     const p = spline[i];
     const prev = spline[idx(i - 1)];
@@ -182,48 +224,56 @@ export function computeCorridor(spline: SplineNode[], isClosed: boolean = true):
     const sx = -ty;
     const sy = tx;
 
-    const wTL = getZone(p, 'wallThickness', 'L');
-    const wTR = getZone(p, 'wallThickness', 'R');
-    wallTL[i] = wTL;
-    wallTR[i] = wTR;
-    const bL = bermaWidth(p, 'L');
-    const bR = bermaWidth(p, 'R');
+    const wTL = wallTL[i];
+    const wTR = wallTR[i];
+    const bL = bLArr[i];
+    const bR = bRArr[i];
 
     // Apenas restringe se estiver fisicamente perto de OUTRO tro?o distante da pista (ex: duas retas paralelas coladas)
     let maxL = 1e9;
     let maxR = 1e9;
-    const maxSideReach = hw + Math.max(bL + wTL, bR + wTR);
-    const reach = Math.max(hw + 30, maxSideReach * 2.15);
+    const reach = reachArr[i];
 
-    for (let j = 0; j < N; j++) {
-      if (j === i) continue;
-      const q = spline[j];
-      const dx = q.x - p.x;
-      const dy = q.y - p.y;
-      if (Math.abs(dx) > reach || Math.abs(dy) > reach) continue;
-      const d = Math.hypot(dx, dy);
-      if (d > reach) continue;
-      if (Math.abs((q.z ?? 0) - (p.z ?? 0)) > 4) continue; // viaduto / desn?vel 3D
+    const cx = Math.floor(p.x * invCellSize);
+    const cy = Math.floor(p.y * invCellSize);
+    for (let ox = -1; ox <= 1; ox++) {
+      const col = grid.get(cx + ox);
+      if (!col) continue;
+      for (let oy = -1; oy <= 1; oy++) {
+        const cell = col.get(cy + oy);
+        if (!cell) continue;
+        for (let k = 0; k < cell.length; k++) {
+          const j = cell[k];
+          if (j === i) continue;
+          const q = spline[j];
+          const dx = q.x - p.x;
+          const dy = q.y - p.y;
+          if (Math.abs(dx) > reach || Math.abs(dy) > reach) continue;
+          const d = Math.hypot(dx, dy);
+          if (d > reach) continue;
+          if (Math.abs((q.z ?? 0) - (p.z ?? 0)) > 4) continue; // viaduto / desn?vel 3D
 
-      let arcDist = Math.abs((q.distFromStart ?? 0) - (p.distFromStart ?? 0));
-      if (isClosed && totalLen > 0) arcDist = Math.min(arcDist, totalLen - arcDist);
+          let arcDist = Math.abs((q.distFromStart ?? 0) - (p.distFromStart ?? 0));
+          if (isClosed && totalLen > 0) arcDist = Math.min(arcDist, totalLen - arcDist);
 
-      // Detetar também a perna oposta de um gancho apertado (onde a tangente inverte o sentido)
-      const qPrev = spline[idx(j - 1)];
-      const qNext = spline[idx(j + 1)];
-      let qtx = qNext.x - qPrev.x;
-      let qty = qNext.y - qPrev.y;
-      const qtl = Math.hypot(qtx, qty) || 1;
-      qtx /= qtl;
-      qty /= qtl;
-      const tangentDot = tx * qtx + ty * qty;
-      const isOppositeHairpin = tangentDot < 0.15 && arcDist > hw * 1.4;
-      if (!isOppositeHairpin && arcDist < d * 2.0 + 15) continue;
+          // Detetar também a perna oposta de um gancho apertado (onde a tangente inverte o sentido)
+          const qPrev = spline[idx(j - 1)];
+          const qNext = spline[idx(j + 1)];
+          let qtx = qNext.x - qPrev.x;
+          let qty = qNext.y - qPrev.y;
+          const qtl = Math.hypot(qtx, qty) || 1;
+          qtx /= qtl;
+          qty /= qtl;
+          const tangentDot = tx * qtx + ty * qty;
+          const isOppositeHairpin = tangentDot < 0.15 && arcDist > hw * 1.4;
+          if (!isOppositeHairpin && arcDist < d * 2.0 + 15) continue;
 
-      const limit = d * 0.48;
-      const sideDot = dx * sx + dy * sy;
-      if (sideDot > 0) maxL = Math.min(maxL, limit);
-      else maxR = Math.min(maxR, limit);
+          const limit = d * 0.48;
+          const sideDot = dx * sx + dy * sy;
+          if (sideDot > 0) maxL = Math.min(maxL, limit);
+          else maxR = Math.min(maxR, limit);
+        }
+      }
     }
 
     // Manter margem mínima de berma para o muro fechar naturalmente antes do bico da estrada

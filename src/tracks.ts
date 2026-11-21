@@ -129,39 +129,78 @@ export function computeSpline(
     zTan.push((w1 + w2) / (w1 / d0 + w2 / d1));
   }
 
+  let totalControlDist = 0;
   for (let i = 0; i < numSegments; i++) {
-    const p0 = isClosed ? nodes[(i - 1 + len) % len] : (i === 0 && pStartTangent ? pStartTangent : nodes[Math.max(0, i - 1)]);
+    const a = nodes[i];
+    const b = isClosed ? nodes[(i + 1) % len] : nodes[i + 1];
+    totalControlDist += Math.hypot(b.x - a.x, b.y - a.y, (b.z ?? 0) - (a.z ?? 0));
+  }
+  const MAX_SPLINE_SAMPLES = 3500;
+  const stepSpacing = Math.max(4, totalControlDist / MAX_SPLINE_SAMPLES);
+
+  for (let i = 0; i < numSegments; i++) {
     const p1 = nodes[i];
     const p2 = isClosed ? nodes[(i + 1) % len] : nodes[i + 1];
-    const p3 = isClosed ? nodes[(i + 2) % len] : (i === numSegments - 1 && pEndTangent ? pEndTangent : nodes[Math.min(len - 1, i + 2)]);
+    const p0: SplineNode = isClosed
+      ? nodes[(i - 1 + len) % len]
+      : i === 0
+      ? pStartTangent ?? { ...p1, x: 2 * p1.x - p2.x, y: 2 * p1.y - p2.y }
+      : nodes[i - 1];
+    const p3: SplineNode = isClosed
+      ? nodes[(i + 2) % len]
+      : i === numSegments - 1
+      ? pEndTangent ?? { ...p2, x: 2 * p2.x - p1.x, y: 2 * p2.y - p1.y }
+      : nodes[i + 2];
 
     // 3D Distance between control points
     const dx = p2.x - p1.x;
     const dy = p2.y - p1.y;
     const dz = (p2.z ?? 0) - (p1.z ?? 0);
     const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    
-    // Smooth step sampling ~3 to 5 units per sample
-    const steps = Math.max(6, Math.floor(dist / 4));
+
+    // Centripetal Catmull-Rom (alpha = 0.5) knot intervals prevent loops/overshoots near short segments
+    const dt01 = Math.pow(Math.max(1e-4, Math.hypot(p1.x - p0.x, p1.y - p0.y)), 0.5);
+    const dt12 = Math.pow(Math.max(1e-4, Math.hypot(p2.x - p1.x, p2.y - p1.y)), 0.5);
+    const dt23 = Math.pow(Math.max(1e-4, Math.hypot(p3.x - p2.x, p3.y - p2.y)), 0.5);
+    const kt0 = 0;
+    const kt1 = kt0 + dt01;
+    const kt2 = kt1 + dt12;
+    const kt3 = kt2 + dt23;
+    const inv01 = 1 / Math.max(1e-8, kt1 - kt0);
+    const inv12 = 1 / Math.max(1e-8, kt2 - kt1);
+    const inv23 = 1 / Math.max(1e-8, kt3 - kt2);
+    const inv02 = 1 / Math.max(1e-8, kt2 - kt0);
+    const inv13 = 1 / Math.max(1e-8, kt3 - kt1);
+
+    // Smooth step sampling ~4 units per sample (capped overall via stepSpacing for huge tracks)
+    const steps = Math.max(6, Math.floor(dist / stepSpacing));
 
     for (let step = 0; step < steps; step++) {
       const t = step / steps;
       const t2 = t * t;
       const t3 = t2 * t;
 
-      const x = 0.5 * (
-        (2 * p1.x) +
-        (-p0.x + p2.x) * t +
-        (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 +
-        (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3
-      );
+      const u = kt1 + t * (kt2 - kt1);
+      const w01 = (u - kt0) * inv01;
+      const w12 = (u - kt1) * inv12;
+      const w23 = (u - kt2) * inv23;
+      const w02 = (u - kt0) * inv02;
+      const w13 = (u - kt1) * inv13;
 
-      const y = 0.5 * (
-        (2 * p1.y) +
-        (-p0.y + p2.y) * t +
-        (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 +
-        (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3
-      );
+      const a1x = p0.x + (p1.x - p0.x) * w01;
+      const a1y = p0.y + (p1.y - p0.y) * w01;
+      const a2x = p1.x + (p2.x - p1.x) * w12;
+      const a2y = p1.y + (p2.y - p1.y) * w12;
+      const a3x = p2.x + (p3.x - p2.x) * w23;
+      const a3y = p2.y + (p3.y - p2.y) * w23;
+
+      const b1x = a1x + (a2x - a1x) * w02;
+      const b1y = a1y + (a2y - a1y) * w02;
+      const b2x = a2x + (a3x - a2x) * w13;
+      const b2y = a2y + (a3y - a2y) * w13;
+
+      const x = b1x + (b2x - b1x) * w12;
+      const y = b1y + (b2y - b1y) * w12;
 
       const zh = zH[i];
       const zA = p1.z ?? 0;
@@ -793,6 +832,58 @@ export function scaleNodes2D(
     x: cx + (node.x - cx) * scaleFactor,
     y: cy + (node.y - cy) * scaleFactor
   }));
+}
+
+export const MIN_TRACK_LENGTH_KM = 0.2;
+export const MAX_TRACK_LENGTH_KM = 30;
+
+/**
+ * Parses a km length input string supporting either comma or dot decimal separators.
+ */
+export function parseTrackLengthKmInput(raw: string): number {
+  const trimmed = (raw || '').trim();
+  if (!/^[+-]?(?:\d+(?:[.,]\d*)?|[.,]\d+)$/.test(trimmed)) return NaN;
+  const normalized = trimmed.replace(',', '.');
+  const val = Number.parseFloat(normalized);
+  return Number.isFinite(val) ? val : NaN;
+}
+
+/**
+ * Derives a clean human-readable circuit name from a file name or uploaded blueprint URL.
+ */
+export function formatBlueprintDisplayName(source: string): string {
+  const trimmed = (source || '').trim();
+  if (!trimmed || trimmed.startsWith('data:')) return 'Circuito';
+  const withoutQuery = trimmed.split(/[?#]/)[0];
+  const segments = withoutQuery.split(/[/\\]/);
+  const rawBase = segments[segments.length - 1] || '';
+  let decodedBase = rawBase;
+  try {
+    decodedBase = decodeURIComponent(rawBase);
+  } catch {
+    decodedBase = rawBase;
+  }
+  const withoutExt = decodedBase.replace(/\.[^/.]+$/, '');
+  const withoutUploadDecorations = withoutExt
+    .replace(/^upload_/i, '')
+    .replace(/_\d{10,}$/, '');
+  const clean = withoutUploadDecorations.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+  return clean || 'Circuito';
+}
+
+/**
+ * Computes a fast polyline length estimate from control points (3D Euclidean).
+ */
+export function estimateControlPointsLength(nodes: SplineNode[], isClosed = true): number {
+  if (!nodes || nodes.length < 2) return 0;
+  let total = 0;
+  const numSegs = isClosed ? nodes.length : nodes.length - 1;
+  for (let i = 0; i < numSegs; i++) {
+    const a = nodes[i];
+    const b = nodes[(i + 1) % nodes.length];
+    total += Math.hypot(b.x - a.x, b.y - a.y, (b.z ?? 0) - (a.z ?? 0));
+  }
+  return total;
 }
 
 /**

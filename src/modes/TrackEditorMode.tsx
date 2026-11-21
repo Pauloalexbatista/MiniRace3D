@@ -1,7 +1,7 @@
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { useCircuitStorage } from '../hooks/useCircuitStorage';
 import { ReferenceMapOverlay } from '../components/ReferenceMapOverlay';
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { Physics, RigidBody, CuboidCollider } from '@react-three/rapier';
@@ -21,6 +21,11 @@ import {
   SprayCanType,
   scaleControlPointsToLength,
   scaleNodes2D,
+  computeCentroid2D,
+  estimateControlPointsLength,
+  formatBlueprintDisplayName,
+  MIN_TRACK_LENGTH_KM,
+  MAX_TRACK_LENGTH_KM,
   SavedCircuit,
   createDefaultCircuit
 } from '../tracks';
@@ -67,6 +72,9 @@ export interface TrackEditorModeProps {
   onGoToRace: () => void;
 }
 
+const PHYSICS_GRAVITY: [number, number, number] = [0, -24, 0];
+const SAFETY_FLOOR_ARGS: [number, number, number] = [10000, 1, 10000];
+
 export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, onGoToRace }) => {
   const [tracksList, setTracksList] = useState(RAW_TRACKS);
   const [isStudioOpen, setIsStudioOpen] = useState<boolean>(true);
@@ -105,11 +113,21 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
 
   // Driving & Camera mode
   const [cameraMode, setCameraMode] = useState<'chase' | 'cockpit' | 'orbit'>('orbit');
-  const [cameraPreset, setCameraPreset] = useState<'iso' | 'top' | 'ground' | 'close'>('iso');
+  const [cameraPreset, setCameraPreset] = useState<'iso' | 'top' | 'ground' | 'close'>('top');
   const [localToastMsg, setLocalToastMsg] = useState<string | null>(null);
-  const showToast = (msg: string | null) => {
+  const toastTimerRef = useRef<number | null>(null);
+  const showToast = (msg: string | null, durationMs = 4500) => {
+    if (toastTimerRef.current !== null) {
+      window.clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = null;
+    }
     setLocalToastMsg(msg);
-    if (msg) setTimeout(() => setLocalToastMsg(null), 3500);
+    if (msg) {
+      toastTimerRef.current = window.setTimeout(() => {
+        toastTimerRef.current = null;
+        setLocalToastMsg(null);
+      }, durationMs);
+    }
   };
   const [speedPreset, setSpeedPreset] = useState<SpeedPreset>('sport');
   const [carClass, setCarClass] = useState<CarClass>('f1');
@@ -145,7 +163,7 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
   const [raceStartTrigger, setRaceStartTrigger] = useState(0);
   const [recoverTrigger, setRecoverTrigger] = useState(0);
   const [headlightsOn, setHeadlightsOn] = useState<boolean>(true);
-  const handleToggleHeadlights = () => setHeadlightsOn((prev) => !prev);
+  const handleToggleHeadlights = useCallback(() => setHeadlightsOn((prev) => !prev), []);
   const [trackThemeId, setTrackThemeId] = useState<TrackThemeId>('f1_modern');
 
   // Visual settings
@@ -159,7 +177,7 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
 
   // Reference Blueprint Map state
   const [mapImageUrl, setMapImageUrl] = useState<string | null>(null);
-  const [showMapOverlay, setShowMapOverlay] = useState<boolean>(true);
+  const [showMapOverlay, setShowMapOverlay] = useState<boolean>(false);
   const [mapOpacity, setMapOpacity] = useState<number>(0.7);
   const [mapSize, setMapSize] = useState<number>(1200);
   const [mapOffsetX, setMapOffsetX] = useState<number>(0);
@@ -740,7 +758,21 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
   };
 
   const handleScaleTrack = (targetKm: number) => {
-    if (targetKm <= 0 || controlPoints.length < 2) return;
+    if (!Number.isFinite(targetKm) || targetKm <= 0 || controlPoints.length < 2) return;
+    if (targetKm < MIN_TRACK_LENGTH_KM) {
+      showToast(`⚠️ Comprimento mínimo permitido: ${MIN_TRACK_LENGTH_KM} km (${Math.round(MIN_TRACK_LENGTH_KM * 1000)} m).`);
+      return;
+    }
+    if (targetKm > MAX_TRACK_LENGTH_KM) {
+      if (targetKm >= 200 && targetKm <= MAX_TRACK_LENGTH_KM * 1000) {
+        showToast(`⚠️ O campo está em km (máx. ${MAX_TRACK_LENGTH_KM} km), não em metros! Para ${Math.round(targetKm)} m escreve ${(targetKm / 1000).toFixed(2)} km.`);
+      } else {
+        showToast(`⚠️ Comprimento máximo permitido: ${MAX_TRACK_LENGTH_KM} km.`);
+      }
+      return;
+    }
+
+    pushHistory();
     const targetMeters = targetKm * 1000;
     const { scaledNodes, scaleFactor, centroid } = scaleControlPointsToLength(
       controlPoints,
@@ -760,8 +792,24 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
       }
     }
 
+    if (branches.length > 0) {
+      setBranches(prev => prev.map(b => ({
+        ...b,
+        points: scaleNodes2D(b.points, centroid.cx, centroid.cy, scaleFactor)
+      })));
+    }
+
+    if (sceneryPatches.length > 0) {
+      setSceneryPatches(prev => prev.map(p => ({
+        ...p,
+        x: Math.round((centroid.cx + (p.x - centroid.cx) * scaleFactor) * 10) / 10,
+        z: Math.round((centroid.cy + (p.z - centroid.cy) * scaleFactor) * 10) / 10
+      })));
+    }
+
     setElevationType('custom');
     setResetTrigger(prev => prev + 1);
+    showToast(`✓ Pista escalada para ${targetKm.toFixed(2)} km (${Math.round(targetMeters)} m).`);
   };
 
 
@@ -770,7 +818,6 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
     setShowMapOverlay(true);
     setShowMapModal(false);
     showToast('🖼️ Imagem de fundo atualizada! A tua pista atual foi mantida.');
-    setTimeout(() => showToast(null), 3500);
   };
 
   const rasterizeToPngDataUrl = (url: string, baseName: string, wHint?: number, hHint?: number): Promise<{ dataUrl: string; fileName: string }> =>
@@ -893,19 +940,25 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
     return { dataUrl, fileName: file.name };
   };
 
-  const handleSelectReferenceMap = (url: string) => {
+  const handleSelectReferenceMap = (url: string, originalFileName?: string) => {
     if (keepTrackOnMapLoad && controlPoints.length > 0) {
       handleSwapMapOnly(url);
     } else {
-      handleLoadMapAndClear(url);
+      handleLoadMapAndClear(url, originalFileName);
     }
   };
 
-  const handleLoadMapAndClear = (url: string) => {
+  const handleLoadMapAndClear = (url: string, originalFileName?: string) => {
     setMapImageUrl(url);
     setShowMapOverlay(true);
-    const filename = url.split('/').pop()?.replace(/\.[^/.]+$/, '').replace(/_/g, ' ') || 'Circuito';
-    setTrackName(filename);
+    const derivedName = formatBlueprintDisplayName(originalFileName || url);
+    const trimmedCurrent = (trackName || '').trim();
+    const isDefaultName =
+      !trimmedCurrent ||
+      /^nova pista$/i.test(trimmedCurrent) ||
+      /^circuito(\s+\d+)?$/i.test(trimmedCurrent);
+    const nextName = (controlPoints.length > 0 || isDefaultName) ? derivedName : trimmedCurrent;
+    setTrackName(nextName);
     setControlPoints([]); // Tela 100% limpa pronta para desenhar
     setBranches([]);
     setSceneryPatches([]);
@@ -919,8 +972,7 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
     setCameraMode('orbit');
     handleCameraPreset('top');
     setResetTrigger(prev => prev + 1);
-    showToast(`📍 Imagem "${filename}" pronta no chão! Clica para desenhar.`);
-    setTimeout(() => showToast(null), 3500);
+    showToast(`📍 Imagem "${nextName}" pronta no chão! Clica para desenhar.`);
   };
 
   const handleAddPointAt = (x: number, z: number) => {
@@ -1189,13 +1241,47 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
   };
 
   const handleLoadSavedTrack = (circuit: SavedCircuit) => {
+    let loadedPoints = circuit.controlPoints || [];
+    let loadedBranches = circuit.branches || [];
+    let loadedScenery = circuit.sceneryPatches || [];
+    let loadedPitNodes = circuit.customPitNodes || null;
+    const loadedClosed = circuit.isClosed ?? true;
+
+    const estLen = estimateControlPointsLength(loadedPoints, loadedClosed);
+    if (loadedPoints.length >= 2 && estLen > 50_000) {
+      const targetMeters =
+        estLen / 1000 >= MIN_TRACK_LENGTH_KM * 1000 && estLen / 1000 <= MAX_TRACK_LENGTH_KM * 1000
+          ? estLen / 1000
+          : 4500;
+      const factor = targetMeters / estLen;
+      const centroid = computeCentroid2D(loadedPoints);
+      loadedPoints = scaleNodes2D(loadedPoints, centroid.cx, centroid.cy, factor);
+      loadedBranches = loadedBranches.map(b => ({
+        ...b,
+        points: scaleNodes2D(b.points, centroid.cx, centroid.cy, factor)
+      }));
+      if (loadedPitNodes && loadedPitNodes.length > 0) {
+        loadedPitNodes = scaleNodes2D(loadedPitNodes, centroid.cx, centroid.cy, factor);
+      }
+      if (loadedScenery.length > 0) {
+        loadedScenery = loadedScenery.map(p => ({
+          ...p,
+          x: Math.round((centroid.cx + (p.x - centroid.cx) * factor) * 10) / 10,
+          z: Math.round((centroid.cy + (p.z - centroid.cy) * factor) * 10) / 10
+        }));
+      }
+      showToast(
+        `⚠️ O circuito "${circuit.name}" tinha ${(estLen / 1000).toFixed(1)} km (escala excessiva) e foi recuperado automaticamente para ${(targetMeters / 1000).toFixed(2)} km.`
+      );
+    }
+
     setTrackName(circuit.name);
-    setControlPoints(circuit.controlPoints || []);
-    setBranches(circuit.branches || []);
-    setSceneryPatches(circuit.sceneryPatches || []);
+    setControlPoints(loadedPoints);
+    setBranches(loadedBranches);
+    setSceneryPatches(loadedScenery);
     setSelectedBranchNode(null);
-    setCustomPitNodes(circuit.customPitNodes || null);
-    setIsClosed(circuit.isClosed ?? true);
+    setCustomPitNodes(loadedPitNodes);
+    setIsClosed(loadedClosed);
     if (circuit.mapImageUrl !== undefined) {
       setMapImageUrl(circuit.mapImageUrl);
       setShowMapOverlay(Boolean(circuit.mapImageUrl));
@@ -1205,7 +1291,7 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
     if (circuit.mapOffsetZ !== undefined) setMapOffsetZ(circuit.mapOffsetZ);
     if (circuit.mapRotation !== undefined) setMapRotation(circuit.mapRotation);
     if (circuit.trackThemeId) setTrackThemeId(circuit.trackThemeId as any);
-    setSelectedPointIndex(circuit.controlPoints && circuit.controlPoints.length > 0 ? 0 : null);
+    setSelectedPointIndex(loadedPoints.length > 0 ? 0 : null);
     setDisableSvgPit(true);
     setResetTrigger(prev => prev + 1);
   };
@@ -1269,6 +1355,7 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
 
   const groundY = Math.min(-0.35, trackStats.minZ - 0.35);
   const safetyFloorY = Math.min(-2, trackStats.minZ - 8);
+  const safetyFloorPos = useMemo<[number, number, number]>(() => [0, safetyFloorY - 1.0, 0], [safetyFloorY]);
   const isDrivingMode = !isStudioOpen || studioTab === 'play' || cameraMode !== 'orbit';
 
   return (
@@ -1378,7 +1465,7 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
       <Canvas
         shadows
         dpr={[1, 1.5]}
-        camera={{ position: [0, 360, 480], fov: 50, near: 0.5, far: 10000 }}
+        camera={{ position: [0, 750, 1], fov: 50, near: 0.5, far: 10000 }}
         style={{ width: '100%', height: '100%' }}
       >
         <Environment3D theme={theme} groundY={groundY} />
@@ -1473,10 +1560,10 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
           sprayRadius={sprayRadius}
         />
 
-        <Physics gravity={[0, -24, 0]} timeStep={1 / 60} interpolate={true}>
+        <Physics gravity={PHYSICS_GRAVITY} timeStep={1 / 60} interpolate={true}>
           {/* Chão sólido infinito de segurança */}
           <RigidBody type="fixed" friction={0.05} restitution={0.05}>
-            <CuboidCollider args={[10000, 1, 10000]} position={[0, safetyFloorY - 1.0, 0]} />
+            <CuboidCollider args={SAFETY_FLOOR_ARGS} position={safetyFloorPos} />
           </RigidBody>
 
           {true && (
@@ -2538,12 +2625,12 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
                       if (uploadRes.ok) {
                         const data = await uploadRes.json();
                         if (data.url) {
-                          handleSelectReferenceMap(data.url);
+                          handleSelectReferenceMap(data.url, file.name);
                           return;
                         }
                       }
                     } catch {}
-                    handleSelectReferenceMap(prepared.dataUrl);
+                    handleSelectReferenceMap(prepared.dataUrl, file.name);
                   } catch {
                     showToast('⚠️ Não foi possível carregar esse ficheiro como imagem.');
                   }

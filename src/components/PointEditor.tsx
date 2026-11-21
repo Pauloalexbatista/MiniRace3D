@@ -1,5 +1,5 @@
 import React from 'react';
-import { SplineNode } from '../tracks';
+import { SplineNode, parseTrackLengthKmInput } from '../tracks';
 import { Sliders, X, ChevronLeft, ChevronRight, Crosshair, Flag, LogIn, LogOut, Trash2, RotateCw, Plus, Maximize2, PenTool } from 'lucide-react';
 
 interface PointEditorProps {
@@ -171,13 +171,11 @@ export const PointEditor: React.FC<PointEditorProps> = ({
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <div style={{ position: 'relative', flex: 1 }}>
               <input
-                type="number"
-                step="0.1"
-                min="0.5"
-                max="35.0"
+                type="text"
+                inputMode="decimal"
                 value={scaleTargetKm}
                 onChange={(e) => setScaleTargetKm(e.target.value)}
-                placeholder="Ex: 4.8"
+                placeholder="Ex: 3.34"
                 style={{
                   width: '100%',
                   background: 'rgba(15, 23, 42, 0.8)',
@@ -206,7 +204,7 @@ export const PointEditor: React.FC<PointEditorProps> = ({
 
             <button
               onClick={() => {
-                const val = parseFloat(scaleTargetKm);
+                const val = parseTrackLengthKmInput(scaleTargetKm);
                 if (!isNaN(val) && val > 0) {
                   onScaleTrack(val);
                 }

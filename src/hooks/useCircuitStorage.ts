@@ -3,7 +3,6 @@ import { SavedCircuit, SplineNode, RoadBranch, SceneryPatch } from '../tracks';
 import { TrackThemeId } from '../trackProfile';
 
 const STORAGE_KEY = 'minirace3d_saved_circuits';
-const DRAFT_KEY = 'minirace3d_current_draft';
 
 export interface CircuitStorageState {
   trackName: string;
@@ -168,7 +167,6 @@ export function useCircuitStorage({
       }
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(nextList.map(sanitizeForLocalStorage)));
-        localStorage.setItem(DRAFT_KEY, JSON.stringify(sanitizeForLocalStorage(circuitToSave)));
       } catch (err) {
         console.error('Falha ao escrever no localStorage:', err);
       }
@@ -269,77 +267,6 @@ export function useCircuitStorage({
     };
     reader.readAsText(file);
   };
-
-  // 6. Auto-save rascunho contínuo
-  useEffect(() => {
-    if (controlPoints.length > 0) {
-      const draft: SavedCircuit = {
-        id: 'draft',
-        name: trackName,
-        controlPoints,
-        branches,
-        sceneryPatches,
-        customPitNodes,
-        isClosed,
-        mapImageUrl,
-        mapSize,
-        mapOffsetX,
-        mapOffsetZ,
-        mapRotation,
-        trackThemeId: trackThemeId as any,
-        savedAt: Date.now()
-      };
-      try {
-        localStorage.setItem(DRAFT_KEY, JSON.stringify(sanitizeForLocalStorage(draft)));
-      } catch {}
-    }
-  }, [controlPoints, branches, sceneryPatches, customPitNodes, trackName, isClosed, mapImageUrl, mapSize, mapOffsetX, mapOffsetZ, mapRotation, trackThemeId]);
-
-  // 7. Recuperar rascunho ou primeiro circuito guardado ao iniciar
-  useEffect(() => {
-    let cancelled = false;
-    async function initTrack() {
-      try {
-        // Tenta rascunho primeiro
-        const rawDraft = localStorage.getItem(DRAFT_KEY);
-        if (rawDraft) {
-          const draft = JSON.parse(rawDraft) as SavedCircuit;
-          if (draft && draft.controlPoints && draft.controlPoints.length >= 2) {
-            if (!cancelled) onLoadTrack(draft);
-            return;
-          }
-        }
-
-        // Se não houver rascunho, carrega os circuitos da pasta circuits/ no disco
-        const res = await fetch('/api/circuits');
-        if (res.ok) {
-          const diskList: SavedCircuit[] = await res.json();
-          if (Array.isArray(diskList) && diskList.length > 0) {
-            const preferred = diskList.find(c => c.name.toLowerCase().includes('estoril')) || diskList[0];
-            if (!cancelled) onLoadTrack(preferred);
-            return;
-          }
-        }
-
-        // Fallback para localStorage
-        const rawSaved = localStorage.getItem(STORAGE_KEY);
-        if (rawSaved) {
-          const list = JSON.parse(rawSaved) as SavedCircuit[];
-          if (Array.isArray(list) && list.length > 0 && list[0].controlPoints && list[0].controlPoints.length >= 2) {
-            if (!cancelled) onLoadTrack(list[0]);
-            return;
-          }
-        }
-      } catch (e) {
-        console.error('Erro na inicialização de pistas:', e);
-      }
-    }
-
-    initTrack();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   return {
     savedCircuits,

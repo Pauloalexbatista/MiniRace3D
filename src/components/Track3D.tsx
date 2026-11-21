@@ -220,12 +220,16 @@ function makePitExitTexture(): THREE.CanvasTexture {
   return tex;
 }
 
+const FINISH_LINE_POS: [number, number, number] = [0, -0.04, 0];
+const FINISH_LINE_ROT: [number, number, number] = [-Math.PI / 2, 0, 0];
+const LIGHT_PANEL_POS: [number, number, number] = [0, 6.05, 0];
+
 const TrimeshColliderWrap: React.FC<{
   enabled: boolean;
   geo?: THREE.BufferGeometry | null;
   surface?: SurfaceType | 'WALL';
   children: React.ReactNode;
-}> = ({ enabled, geo, surface, children }) => {
+}> = React.memo(({ enabled, geo, surface, children }) => {
   const cleanGeo = useMemo(
     () => (enabled ? sanitizeGeoForRapier(geo, surface === 'WALL') : null),
     [enabled, geo, surface]
@@ -257,7 +261,7 @@ const TrimeshColliderWrap: React.FC<{
     );
   }
   return <>{children}</>;
-};
+});
 
 const numberTextures = new Map<number, THREE.CanvasTexture>();
 function getNumberSpriteTexture(num: number): THREE.CanvasTexture {
@@ -318,7 +322,7 @@ interface Track3DProps {
   groundY?: number;
 }
 
-export const Track3D: React.FC<Track3DProps> = ({
+export const Track3D: React.FC<Track3DProps> = React.memo(({
   spline,
   controlPoints,
   selectedPointIndex,
@@ -2297,6 +2301,37 @@ function disposeGeometriesIn(obj: object | null | undefined) {
   }
 }
 
+  const startGantry = useMemo(() => {
+    if (!geometries) return null;
+    const span = geometries.startPostOffsetL - geometries.startPostOffsetR;
+    const midX = (geometries.startPostOffsetL + geometries.startPostOffsetR) * 0.5;
+    return {
+      finishLineGeo: new THREE.PlaneGeometry(geometries.startRoadWidth, 2.2),
+      postGeo: new THREE.BoxGeometry(0.7, 7.2, 0.7),
+      beamGeo: new THREE.BoxGeometry(span + 0.8, 0.9, 1.1),
+      beamTrimGeo: new THREE.BoxGeometry(span + 0.8, 0.2, 1.15),
+      lightPanelGeo: new THREE.BoxGeometry(6.4, 0.85, 0.7),
+      archRotation: [0, geometries.archRotationY, 0] as [number, number, number],
+      postPosL: [geometries.startPostOffsetL, 3.4, 0] as [number, number, number],
+      postPosR: [geometries.startPostOffsetR, 3.4, 0] as [number, number, number],
+      beamPos: [midX, 6.8, 0] as [number, number, number],
+      beamTrimPos: [midX, 7.3, 0] as [number, number, number],
+    };
+  }, [
+    geometries?.startRoadWidth,
+    geometries?.startPostOffsetL,
+    geometries?.startPostOffsetR,
+    geometries?.archRotationY,
+  ]);
+
+  useEffect(() => () => {
+    startGantry?.finishLineGeo.dispose();
+    startGantry?.postGeo.dispose();
+    startGantry?.beamGeo.dispose();
+    startGantry?.beamTrimGeo.dispose();
+    startGantry?.lightPanelGeo.dispose();
+  }, [startGantry]);
+
   useEffect(() => () => disposeGeometriesIn(geometries), [geometries]);
   useEffect(() => () => disposeGeometriesIn(fusedNetwork), [fusedNetwork]);
   useEffect(() => () => disposeGeometriesIn(branchGeos), [branchGeos]);
@@ -2799,48 +2834,36 @@ function disposeGeometriesIn(obj: object | null | undefined) {
       )}
 
       {/* 10. Pórtico de Partida / Meta GP (Postes sempre fora dos muros + Linha Axadrezada + Semáforo) */}
-      <group position={geometries.startArchPos} rotation={[0, geometries.archRotationY, 0]}>
-        {(() => {
-          const span = geometries.startPostOffsetL - geometries.startPostOffsetR;
-          const midX = (geometries.startPostOffsetL + geometries.startPostOffsetR) * 0.5;
-          return (
-            <>
-              {/* Linha da Meta Axadrezada (Single Draw Call) */}
-              <mesh position={[0, -0.04, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-                <planeGeometry args={[geometries.startRoadWidth, 2.2]} />
-                <meshStandardMaterial map={finishLineTex} roughness={0.6} polygonOffset polygonOffsetFactor={-2} />
-              </mesh>
+      {startGantry && (
+        <group position={geometries.startArchPos} rotation={startGantry.archRotation}>
+          {/* Linha da Meta Axadrezada (Single Draw Call) */}
+          <mesh position={FINISH_LINE_POS} rotation={FINISH_LINE_ROT} geometry={startGantry.finishLineGeo} receiveShadow>
+            <meshStandardMaterial map={finishLineTex} roughness={0.6} polygonOffset polygonOffsetFactor={-2} />
+          </mesh>
 
-              {/* Postes Laterais FORA dos Muros */}
-              <mesh position={[geometries.startPostOffsetL, 3.4, 0]} castShadow receiveShadow>
-                <boxGeometry args={[0.7, 7.2, 0.7]} />
-                <meshStandardMaterial color="#e2e8f0" roughness={0.35} metalness={0.5} />
-              </mesh>
-              <mesh position={[geometries.startPostOffsetR, 3.4, 0]} castShadow receiveShadow>
-                <boxGeometry args={[0.7, 7.2, 0.7]} />
-                <meshStandardMaterial color="#e2e8f0" roughness={0.35} metalness={0.5} />
-              </mesh>
+          {/* Postes Laterais FORA dos Muros */}
+          <mesh position={startGantry.postPosL} geometry={startGantry.postGeo} castShadow receiveShadow>
+            <meshStandardMaterial color="#e2e8f0" roughness={0.35} metalness={0.5} />
+          </mesh>
+          <mesh position={startGantry.postPosR} geometry={startGantry.postGeo} castShadow receiveShadow>
+            <meshStandardMaterial color="#e2e8f0" roughness={0.35} metalness={0.5} />
+          </mesh>
 
-              {/* Viga Superior do Pórtico */}
-              <mesh position={[midX, 6.8, 0]} castShadow receiveShadow>
-                <boxGeometry args={[span + 0.8, 0.9, 1.1]} />
-                <meshStandardMaterial color="#0f172a" roughness={0.35} metalness={0.4} />
-              </mesh>
-              <mesh position={[midX, 7.3, 0]} castShadow>
-                <boxGeometry args={[span + 0.8, 0.2, 1.15]} />
-                <meshStandardMaterial color="#ef4444" roughness={0.3} />
-              </mesh>
+          {/* Viga Superior do Pórtico */}
+          <mesh position={startGantry.beamPos} geometry={startGantry.beamGeo} castShadow receiveShadow>
+            <meshStandardMaterial color="#0f172a" roughness={0.35} metalness={0.4} />
+          </mesh>
+          <mesh position={startGantry.beamTrimPos} geometry={startGantry.beamTrimGeo} castShadow>
+            <meshStandardMaterial color="#ef4444" roughness={0.3} />
+          </mesh>
 
-              {/* Painel de Luzes de Partida F1 (3 Vermelhas -> Verde) */}
-              <mesh position={[0, 6.05, 0]} castShadow>
-                <boxGeometry args={[6.4, 0.85, 0.7]} />
-                <meshStandardMaterial color="#020617" roughness={0.3} metalness={0.6} />
-              </mesh>
-              <StartGantryLights />
-            </>
-          );
-        })()}
-      </group>
+          {/* Painel de Luzes de Partida F1 (3 Vermelhas -> Verde) */}
+          <mesh position={LIGHT_PANEL_POS} geometry={startGantry.lightPanelGeo} castShadow>
+            <meshStandardMaterial color="#020617" roughness={0.3} metalness={0.6} />
+          </mesh>
+          <StartGantryLights />
+        </group>
+      )}
 
       {/* 11. Marcações da BOX (Avisos BOX 300m / 200m / 100m na pista + Entrada e Saída da Box) */}
       {pitApproachDecals.map((item) => {
@@ -3106,4 +3129,4 @@ function disposeGeometriesIn(obj: object | null | undefined) {
       )}
     </group>
   );
-};
+});
