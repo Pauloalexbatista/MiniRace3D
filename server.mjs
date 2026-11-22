@@ -113,17 +113,47 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = await readBody(req);
       const circuit = JSON.parse(body);
+      if (!Array.isArray(circuit?.controlPoints) || circuit.controlPoints.length < 2) {
+        sendJson(res, 400, { error: 'O circuito está vazio (mínimo 2 pontos).' });
+        return;
+      }
       if (!fs.existsSync(CIRCUITS_DIR)) fs.mkdirSync(CIRCUITS_DIR, { recursive: true });
 
-      const safeName = (circuit.name || 'circuito')
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/[^a-z0-9_-]/g, '_')
-        .replace(/_+/g, '_');
+      const safeName =
+        (circuit.name || 'circuito')
+          .toLowerCase()
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .replace(/[^a-z0-9_-]/g, '_')
+          .replace(/_+/g, '_') || 'circuito';
 
       const filename = safeName + '.json';
       const filePath = path.join(CIRCUITS_DIR, filename);
+
+      if (fs.existsSync(filePath)) {
+        try {
+          const existingRaw = fs.readFileSync(filePath, 'utf8');
+          const existingParsed = JSON.parse(existingRaw);
+          if (Array.isArray(existingParsed?.controlPoints) && existingParsed.controlPoints.length >= 2) {
+            const backupsDir = path.join(CIRCUITS_DIR, '.backups');
+            if (!fs.existsSync(backupsDir)) fs.mkdirSync(backupsDir, { recursive: true });
+            const backupName = `${safeName}_${Date.now()}.json`;
+            fs.writeFileSync(path.join(backupsDir, backupName), existingRaw, 'utf8');
+            const prefix = `${safeName}_`;
+            const matching = fs
+              .readdirSync(backupsDir)
+              .filter((f) => f.startsWith(prefix) && f.endsWith('.json'))
+              .sort();
+            if (matching.length > 5) {
+              for (const oldFile of matching.slice(0, matching.length - 5)) {
+                try {
+                  fs.unlinkSync(path.join(backupsDir, oldFile));
+                } catch {}
+              }
+            }
+          }
+        } catch {}
+      }
 
       if (!circuit.id) circuit.id = 'circuit_' + Date.now();
       circuit.fileName = filename;

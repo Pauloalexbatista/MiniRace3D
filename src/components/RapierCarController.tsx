@@ -8,6 +8,12 @@ import { SurfaceType, SpeedPreset } from '../physics';
 import { Car3D, CarClass } from './Car3D';
 import { publishTelemetry, TelemetryData, PitStopStatus, RaceStartPhase, registerStartCountdownHandler } from '../telemetryStore';
 import type { LocalCarNetSample } from '../multiplayer/types';
+import {
+  buildTunnelIndex,
+  detectCarTunnelState,
+  computeTunnelChaseDesired,
+  clampCameraInsideTunnels,
+} from '../tunnelCamera';
 
 const ZERO_VEC3: [number, number, number] = [0, 0, 0];
 const CAR_RIGIDBODY_USER_DATA = { surface: 'CAR' };
@@ -52,6 +58,11 @@ const SKID_FADE_SEC = 25.0;
 const wheelRayFilter = (col: any): boolean => {
   const surf = (col?.parent()?.userData as { surface?: unknown } | undefined)?.surface;
   return surf !== 'WALL' && surf !== 'CAR';
+};
+
+const cameraRayFilter = (col: any): boolean => {
+  const surf = (col?.parent()?.userData as { surface?: unknown } | undefined)?.surface;
+  return surf !== 'CAR';
 };
 
 function isSurfaceType(val: unknown): val is SurfaceType {
@@ -242,6 +253,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
   const brakeLightRef = useRef(0);
   const camPosRef = useRef(new THREE.Vector3());
   const camLookRef = useRef(new THREE.Vector3());
+  const tunnelBlendRef = useRef(0);
   const telemetryAccRef = useRef(0);
   const netEmitAccRef = useRef(0);
   const wasIdleOrbitRef = useRef(false);
@@ -418,6 +430,11 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
     [spline, isClosed]
   );
 
+  const tunnelIndex = useMemo(
+    () => buildTunnelIndex(spline, isClosed, branches),
+    [spline, isClosed, branches]
+  );
+
   const playStartBeep = (freq: number, durationMs: number, gainVal = 0.08) => {
     try {
       if (typeof window === 'undefined') return;
@@ -560,6 +577,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
     }
     camPosRef.current.set(0, 0, 0);
     camLookRef.current.set(0, 0, 0);
+    tunnelBlendRef.current = 0;
     for (let i = 0; i < prevWheelPosRef.length; i++) {
       prevWheelPosRef[i].valid = false;
     }
@@ -649,6 +667,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
     flippedSecRef.current = 0;
     camPosRef.current.set(0, 0, 0);
     camLookRef.current.set(0, 0, 0);
+    tunnelBlendRef.current = 0;
     for (let i = 0; i < prevWheelPosRef.length; i++) {
       prevWheelPosRef[i].valid = false;
     }
@@ -742,6 +761,12 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
   const tmpCamCarPos = useMemo(() => new THREE.Vector3(), []);
   const tmpCamCarQuat = useMemo(() => new THREE.Quaternion(), []);
   const tmpCamForward = useMemo(() => new THREE.Vector3(), []);
+  const tmpCamPivot = useMemo(() => new THREE.Vector3(), []);
+  const tmpCamRayDir = useMemo(() => new THREE.Vector3(), []);
+  const tmpCamRay = useMemo(
+    () => new rapier.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: -1 }),
+    [rapier]
+  );
   const tmpWheelRays = useMemo(
     () => WHEEL_MOUNTS.map(() => new rapier.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 })),
     [rapier]
@@ -1605,13 +1630,101 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
       tmpCamForward.set(0, 0, 1).applyQuaternion(tmpCamCarQuat).normalize();
 
       if (cameraMode === 'chase') {
-        tmpCamOffset.set(0, 5.2, -13.0).applyQuaternion(tmpCamCarQuat);
-        tmpDesiredCam.copy(tmpCamCarPos).add(tmpCamOffset);
+        const carTunnel =
+          tunnelIndex.runs.length > 0
+            ? detectCarTunnelState(tunnelIndex, tmpCamCarPos, tmpCamForward)
+            : null;
+
+        if (carTunnel?.status === 'inside') {
+          tunnelBlendRef.current = Math.max(tunnelBlendRef.current, 0.85);
+          tunnelBlendRef.current = THREE.MathUtils.lerp(
+            tunnelBlendRef.current,
+            1,
+            1 - Math.exp(-18 * visDt)
+          );
+        } else if (carTunnel?.status === 'approaching') {
+          tunnelBlendRef.current = THREE.MathUtils.lerp(
+            tunnelBlendRef.current,
+            carTunnel.blend,
+            1 - Math.exp(-10 * visDt)
+          );
+        } else {
+          tunnelBlendRef.current = THREE.MathUtils.lerp(
+            tunnelBlendRef.current,
+            0,
+            1 - Math.exp(-4.5 * visDt)
+          );
+        }
+
+        if (carTunnel) {
+          computeTunnelChaseDesired(
+            tmpCamCarPos,
+            tmpCamCarQuat,
+            carTunnel,
+            tunnelBlendRef.current,
+            tmpDesiredCam
+          );
+        } else {
+          const blend = tunnelBlendRef.current;
+          tmpCamOffset
+            .set(
+              0,
+              THREE.MathUtils.lerp(5.2, 2.65, blend),
+              -THREE.MathUtils.lerp(13.0, 6.5, blend)
+            )
+            .applyQuaternion(tmpCamCarQuat);
+          tmpDesiredCam.copy(tmpCamCarPos).add(tmpCamOffset);
+        }
+
         if (camPosRef.current.lengthSq() === 0) camPosRef.current.copy(tmpDesiredCam);
-        const camAlpha = 1 - Math.exp(-9 * visDt);
+        const camRate = 9 + 9 * tunnelBlendRef.current;
+        const camAlpha = 1 - Math.exp(-camRate * visDt);
         camPosRef.current.lerp(tmpDesiredCam, camAlpha);
 
-        tmpLookTarget.copy(tmpCamCarPos).addScaledVector(tmpCamForward, 8).add(tmpLookUpOffset);
+        if (tunnelIndex.runs.length > 0) {
+          clampCameraInsideTunnels(tunnelIndex, camPosRef.current, tmpCamCarPos, carTunnel);
+        }
+
+        tmpCamPivot.copy(tmpCamCarPos);
+        tmpCamPivot.y = tmpCamCarPos.y + 1.35;
+        tmpCamRayDir.subVectors(camPosRef.current, tmpCamPivot);
+        const rayDist = tmpCamRayDir.length();
+        if (rayDist > 0.5) {
+          tmpCamRayDir.divideScalar(rayDist);
+          tmpCamRay.origin.x = tmpCamPivot.x;
+          tmpCamRay.origin.y = tmpCamPivot.y;
+          tmpCamRay.origin.z = tmpCamPivot.z;
+          tmpCamRay.dir.x = tmpCamRayDir.x;
+          tmpCamRay.dir.y = tmpCamRayDir.y;
+          tmpCamRay.dir.z = tmpCamRayDir.z;
+          try {
+            const hit = world.castRay(
+              tmpCamRay,
+              rayDist,
+              true,
+              undefined,
+              undefined,
+              undefined,
+              rb,
+              cameraRayFilter
+            );
+            const hitToi = hit ? ((hit as any).timeOfImpact ?? (hit as any).toi) : undefined;
+            if (typeof hitToi === 'number' && hitToi >= 0 && hitToi < rayDist) {
+              camPosRef.current
+                .copy(tmpCamPivot)
+                .addScaledVector(tmpCamRayDir, Math.max(2.0, hitToi - 0.85));
+            }
+          } catch {
+            // Ignore raycast errors before Rapier world is ready
+          }
+        }
+
+        const lookAhead = 8 + 2 * tunnelBlendRef.current;
+        tmpLookUpOffset.set(0, 1.5 - 0.35 * tunnelBlendRef.current, 0);
+        tmpLookTarget
+          .copy(tmpCamCarPos)
+          .addScaledVector(tmpCamForward, lookAhead)
+          .add(tmpLookUpOffset);
         if (camLookRef.current.lengthSq() === 0) camLookRef.current.copy(tmpLookTarget);
         const lookAlpha = 1 - Math.exp(-12 * visDt);
         camLookRef.current.lerp(tmpLookTarget, lookAlpha);

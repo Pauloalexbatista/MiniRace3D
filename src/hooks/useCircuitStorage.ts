@@ -69,13 +69,19 @@ export function useCircuitStorage({
         if (Array.isArray(diskCircuits) && diskCircuits.length > 0) {
           setSavedCircuits(prev => {
             const map = new Map<string, SavedCircuit>();
-            diskCircuits.forEach(c => {
+            prev.forEach(c => {
               const key = (c.name || c.id).toLowerCase();
               map.set(key, c);
             });
-            prev.forEach(c => {
+            diskCircuits.forEach(c => {
               const key = (c.name || c.id).toLowerCase();
-              if (!map.has(key)) map.set(key, c);
+              const existing = map.get(key);
+              const existingPts = existing?.controlPoints?.length || 0;
+              const diskPts = c?.controlPoints?.length || 0;
+              if (existing && existingPts >= 2 && diskPts < 2) {
+                return;
+              }
+              map.set(key, c);
             });
             const merged = Array.from(map.values());
             merged.sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0));
@@ -97,6 +103,11 @@ export function useCircuitStorage({
 
   // 2. Guardar circuito atual no disco (pasta circuits/) e no localStorage
   const saveCurrentTrack = async () => {
+    if (!controlPoints || controlPoints.length < 2) {
+      setSaveSuccessMsg('⚠️ Desenha pelo menos 2 pontos antes de gravar o circuito!');
+      setTimeout(() => setSaveSuccessMsg(null), 4000);
+      return;
+    }
     const nameToSave = (trackName || '').trim() || 'Meu Circuito';
     const id = 'circuit_' + Date.now();
     let finalMapUrl = mapImageUrl;
@@ -227,40 +238,63 @@ export function useCircuitStorage({
   // 5. Importar circuito a partir de ficheiro .json
   const importJson = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
     const reader = new FileReader();
     reader.onload = async (event) => {
       try {
         const data = JSON.parse(event.target?.result as string);
-        if (data.controlPoints && Array.isArray(data.controlPoints)) {
-          const loaded: SavedCircuit = {
-            id: 'imported_' + Date.now(),
-            name: data.name || file.name.replace(/\.json$/i, ''),
-            controlPoints: data.controlPoints,
-            branches: Array.isArray(data.branches) ? data.branches : [],
-            sceneryPatches: Array.isArray(data.sceneryPatches) ? data.sceneryPatches : [],
-            customPitNodes: data.customPitNodes || null,
-            isClosed: data.isClosed ?? true,
-            mapImageUrl: data.mapImageUrl || null,
-            mapSize: data.mapSize || 1200,
-            mapOffsetX: data.mapOffsetX || 0,
-            mapOffsetZ: data.mapOffsetZ || 0,
-            mapRotation: data.mapRotation || 0,
-            trackThemeId: data.trackThemeId || 'f1_modern',
-            savedAt: Date.now()
-          };
-
-          try {
-            await fetch('/api/circuits', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(loaded)
-            });
-            reloadFromDisk();
-          } catch {}
-
-          onLoadTrack(loaded);
+        if (!data || !Array.isArray(data.controlPoints) || data.controlPoints.length < 2) {
+          alert(
+            '⚠️ Este ficheiro JSON está vazio (menos de 2 pontos de pista) e não foi importado para proteger os teus circuitos guardados.'
+          );
+          return;
         }
+
+        const importedName =
+          (typeof data.name === 'string' && data.name.trim()) ||
+          file.name.replace(/\.json$/i, '').trim() ||
+          'Circuito Importado';
+
+        const existing = savedCircuits.find(
+          c => (c.name || '').trim().toLowerCase() === importedName.toLowerCase()
+        );
+        if (existing && (existing.controlPoints?.length || 0) >= 2) {
+          const confirmed = window.confirm(
+            `Já existe um circuito guardado chamado "${existing.name}" (${existing.controlPoints.length} pontos).\n\nQueres substituí-lo pelo ficheiro importado (${data.controlPoints.length} pontos)?`
+          );
+          if (!confirmed) return;
+        }
+
+        const loaded: SavedCircuit = {
+          id: 'imported_' + Date.now(),
+          name: importedName,
+          controlPoints: data.controlPoints,
+          branches: Array.isArray(data.branches) ? data.branches : [],
+          sceneryPatches: Array.isArray(data.sceneryPatches) ? data.sceneryPatches : [],
+          customPitNodes: data.customPitNodes || null,
+          isClosed: data.isClosed ?? true,
+          mapImageUrl: data.mapImageUrl || null,
+          mapSize: data.mapSize || 1200,
+          mapOffsetX: data.mapOffsetX || 0,
+          mapOffsetZ: data.mapOffsetZ || 0,
+          mapRotation: data.mapRotation || 0,
+          trackThemeId: data.trackThemeId || 'f1_modern',
+          savedAt: Date.now()
+        };
+
+        try {
+          const res = await fetch('/api/circuits', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(loaded)
+          });
+          if (res.ok) {
+            reloadFromDisk();
+          }
+        } catch {}
+
+        onLoadTrack(loaded);
       } catch (err) {
         alert('Erro ao carregar ficheiro JSON.');
       }
