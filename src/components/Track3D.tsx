@@ -291,7 +291,7 @@ function getNumberSpriteTexture(num: number): THREE.CanvasTexture {
 }
 
 import { untanglePolyline3D, roundTightWallCorners3D } from '../wallGeometry';
-import { computeCorridor, getZone, bermaWidth } from '../trackCorridor';
+import { computeCorridor, getZone, getZoneColor, bermaWidth } from '../trackCorridor';
 import { TRACK_THEMES, TrackThemeId, calculateCrossSection } from '../trackProfile';
 import { computeBridgePillars } from '../bridgePillars';
 
@@ -380,7 +380,7 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
     if (spline.length < 2) return null;
 
     const N = spline.length;
-    const barrierHeight = themeConfig.barrierHeight;
+    const barrierHeight = Math.max(1.4, themeConfig.barrierHeight);
     const wallThickness = themeConfig.barrierThickness;
 
     // Buffers das 15 Zonas
@@ -774,40 +774,42 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
 
       roadVerts.push(pBermStartL.x, pBermStartL.y, pBermStartL.z);
       roadVerts.push(pBermStartR.x, pBermStartR.y, pBermStartR.z);
-      const cRoad = parseColorRGB(spline[i].asphaltColor, asphaltColor);
-      roadColors.push(...cRoad, ...cRoad);
-      const cWhite = parseColorRGB(spline[i].whiteLineColor, '#ffffff');
-      whiteLineColors.push(...cWhite, ...cWhite, ...cWhite, ...cWhite);
-      const cPinchRed: [number, number, number] = [0.78, 0.005, 0.005];
-      const cYellowBase = parseColorRGB(spline[i].curbYellowColor, themeConfig.curbWarningColor);
-      const cRedBase = parseColorRGB(spline[i].curbRedColor, themeConfig.curbApexColor);
-      const cGrassBase = parseColorRGB(spline[i].grassColor, grassColor);
-      const cSandBase = parseColorRGB(spline[i].sandColor, themeConfig.sandColor || '#d97706');
-      const cGravelBase = parseColorRGB(spline[i].gravelColor, themeConfig.gravelColor || '#78716c');
+      const currNode = spline[i];
+      const defaultWhiteLineColor = themeConfig.whiteLineColor || '#ffffff';
+      const defaultSandColor = themeConfig.sandColor || '#d97706';
+      const defaultGravelColor = themeConfig.gravelColor || '#78716c';
 
-      const cYellowL = cYellowBase;
-      const cYellowR = cYellowBase;
+      const cRoad = parseColorRGB(currNode.asphaltColor, asphaltColor);
+      roadColors.push(...cRoad, ...cRoad);
+
+      const cWhiteL = parseColorRGB(getZoneColor(currNode, 'whiteLineColor', 'L', defaultWhiteLineColor), defaultWhiteLineColor);
+      const cWhiteR = parseColorRGB(getZoneColor(currNode, 'whiteLineColor', 'R', defaultWhiteLineColor), defaultWhiteLineColor);
+      whiteLineColors.push(...cWhiteL, ...cWhiteL, ...cWhiteR, ...cWhiteR);
+
+      const cYellowL = parseColorRGB(getZoneColor(currNode, 'curbYellowColor', 'L', themeConfig.curbWarningColor), themeConfig.curbWarningColor);
+      const cYellowR = parseColorRGB(getZoneColor(currNode, 'curbYellowColor', 'R', themeConfig.curbWarningColor), themeConfig.curbWarningColor);
       yellowCurbsColors.push(...cYellowL, ...cYellowL, ...cYellowR, ...cYellowR);
 
-      const cRedL = cRedBase;
-      const cRedR = cRedBase;
+      const cRedL = parseColorRGB(getZoneColor(currNode, 'curbRedColor', 'L', themeConfig.curbApexColor), themeConfig.curbApexColor);
+      const cRedR = parseColorRGB(getZoneColor(currNode, 'curbRedColor', 'R', themeConfig.curbApexColor), themeConfig.curbApexColor);
       redCurbsColors.push(...cRedL, ...cRedL, ...cRedR, ...cRedR);
 
-      const cGrassL = cGrassBase;
-      const cGrassR = cGrassBase;
+      const cGrassL = parseColorRGB(getZoneColor(currNode, 'grassColor', 'L', grassColor), grassColor);
+      const cGrassR = parseColorRGB(getZoneColor(currNode, 'grassColor', 'R', grassColor), grassColor);
       grassShoulderColors.push(...cGrassL, ...cGrassL, ...cGrassR, ...cGrassR);
 
-      const cSandL = cSandBase;
-      const cSandR = cSandBase;
+      const cSandL = parseColorRGB(getZoneColor(currNode, 'sandColor', 'L', defaultSandColor), defaultSandColor);
+      const cSandR = parseColorRGB(getZoneColor(currNode, 'sandColor', 'R', defaultSandColor), defaultSandColor);
       sandColors.push(...cSandL, ...cSandL, ...cSandR, ...cSandR);
 
-      const cGravelL = cGravelBase;
-      const cGravelR = cGravelBase;
+      const cGravelL = parseColorRGB(getZoneColor(currNode, 'gravelColor', 'L', defaultGravelColor), defaultGravelColor);
+      const cGravelR = parseColorRGB(getZoneColor(currNode, 'gravelColor', 'R', defaultGravelColor), defaultGravelColor);
       gravelColors.push(...cGravelL, ...cGravelL, ...cGravelR, ...cGravelR);
 
-      const cWall = parseColorRGB(spline[i].wallColor, wallColor);
-      guardrailLeftColors.push(...cWall, ...cWall, ...cWall, ...cWall);
-      guardrailRightColors.push(...cWall, ...cWall, ...cWall, ...cWall);
+      const cWallL = parseColorRGB(getZoneColor(currNode, 'wallColor', 'L', wallColor), wallColor);
+      const cWallR = parseColorRGB(getZoneColor(currNode, 'wallColor', 'R', wallColor), wallColor);
+      guardrailLeftColors.push(...cWallL, ...cWallL, ...cWallL, ...cWallL);
+      guardrailRightColors.push(...cWallR, ...cWallR, ...cWallR, ...cWallR);
 
       const totalBermL = Math.max(0.0001, wWhiteL + wYellowL + wRedL + wGrassL + wSandL + wGravelL);
       const totalBermR = Math.max(0.0001, wWhiteR + wYellowR + wRedR + wGrassR + wSandR + wGravelR);
@@ -1947,7 +1949,7 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
     if (!hasBranches && !hasPit) return null;
     return buildUnifiedRoadNetwork(spline, isClosed, branches, 1.8, pitSpline, {
       asphaltColor,
-      whiteLineColor: '#ffffff',
+      whiteLineColor: themeConfig.whiteLineColor || '#ffffff',
       curbYellowColor: themeConfig.curbWarningColor,
       curbRedColor: themeConfig.curbApexColor,
       grassColor,
@@ -1955,7 +1957,7 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
       gravelColor: themeConfig.gravelColor || '#78716c',
       wallColor,
       wallWidth: themeConfig.barrierThickness ?? 0.8,
-      wallHeight: themeConfig.barrierHeight ?? 1.25,
+      wallHeight: Math.max(1.4, themeConfig.barrierHeight ?? 1.4),
       groundY,
       overpassMask: geometries?.isBridgeOverpass,
       mainHalfWidths: geometries?.frames.map(f => f.cross.halfWidth),
@@ -1973,12 +1975,13 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
       themeConfig.sandColor,
       themeConfig.gravelColor,
       wallColor,
-      themeConfig.barrierHeight,
+      Math.max(1.4, themeConfig.barrierHeight),
       themeConfig.barrierThickness,
       spline,
       controlPoints,
       geometries?.frames,
-      geometries?.mainWallData
+      geometries?.mainWallData,
+      themeConfig.whiteLineColor || '#ffffff'
     );
   }, [fusedNetwork, branches, asphaltColor, themeConfig, grassColor, wallColor, spline, controlPoints, geometries]);
 
@@ -2381,7 +2384,7 @@ function disposeGeometriesIn(obj: object | null | undefined) {
       {!fusedNetwork && branchGeos && branchGeos.whiteLineGeo && (
         <TrimeshColliderWrap enabled={enablePhysics} geo={branchGeos.whiteLineGeo} surface="CURB">
           <mesh geometry={branchGeos.whiteLineGeo} receiveShadow>
-            <meshStandardMaterial color="#ffffff" roughness={0.4} metalness={0.1} side={THREE.DoubleSide} />
+            <meshStandardMaterial color="#ffffff" vertexColors roughness={0.4} metalness={0.1} side={THREE.DoubleSide} />
           </mesh>
         </TrimeshColliderWrap>
       )}
@@ -2511,7 +2514,7 @@ function disposeGeometriesIn(obj: object | null | undefined) {
             <>
               <TrimeshColliderWrap enabled={enablePhysics} geo={fusedNetwork.whiteLineGeo} surface="CURB">
                 <mesh geometry={fusedNetwork.whiteLineGeo} receiveShadow>
-                  <meshStandardMaterial color="#ffffff" roughness={0.4} metalness={0.1} side={THREE.DoubleSide} />
+                  <meshStandardMaterial color="#ffffff" vertexColors roughness={0.4} metalness={0.1} side={THREE.DoubleSide} />
                 </mesh>
               </TrimeshColliderWrap>
               <TrimeshColliderWrap enabled={enablePhysics} geo={fusedNetwork.yellowCurbsGeo} surface="CURB_WIDE">
@@ -2548,7 +2551,8 @@ function disposeGeometriesIn(obj: object | null | undefined) {
                 <TrimeshColliderWrap enabled={enablePhysics} geo={fusedNetwork.wallGeo} surface="WALL">
                   <mesh geometry={fusedNetwork.wallGeo} receiveShadow>
                     <meshStandardMaterial
-                      color={wallColor}
+                      color="#ffffff"
+                      vertexColors
                       roughness={0.3}
                       metalness={0.08}
                       side={THREE.DoubleSide}
@@ -2559,7 +2563,7 @@ function disposeGeometriesIn(obj: object | null | undefined) {
               {geometries.bridgeWhiteGeo && (
                 <TrimeshColliderWrap enabled={enablePhysics} geo={geometries.bridgeWhiteGeo} surface="CURB">
                   <mesh geometry={geometries.bridgeWhiteGeo} receiveShadow>
-                    <meshStandardMaterial color="#ffffff" roughness={0.4} metalness={0.1} side={THREE.DoubleSide} />
+                    <meshStandardMaterial color="#ffffff" vertexColors roughness={0.4} metalness={0.1} side={THREE.DoubleSide} />
                   </mesh>
                 </TrimeshColliderWrap>
               )}
@@ -2601,14 +2605,14 @@ function disposeGeometriesIn(obj: object | null | undefined) {
               {showGuardrails && geometries.bridgeWallLGeo && (
                 <TrimeshColliderWrap enabled={enablePhysics} geo={geometries.bridgeWallLGeo} surface="WALL">
                   <mesh geometry={geometries.bridgeWallLGeo} receiveShadow>
-                    <meshStandardMaterial color={wallColor} roughness={0.3} metalness={0.08} side={THREE.DoubleSide} />
+                    <meshStandardMaterial color="#ffffff" vertexColors roughness={0.3} metalness={0.08} side={THREE.DoubleSide} />
                   </mesh>
                 </TrimeshColliderWrap>
               )}
               {showGuardrails && geometries.bridgeWallRGeo && (
                 <TrimeshColliderWrap enabled={enablePhysics} geo={geometries.bridgeWallRGeo} surface="WALL">
                   <mesh geometry={geometries.bridgeWallRGeo} receiveShadow>
-                    <meshStandardMaterial color={wallColor} roughness={0.3} metalness={0.08} side={THREE.DoubleSide} />
+                    <meshStandardMaterial color="#ffffff" vertexColors roughness={0.3} metalness={0.08} side={THREE.DoubleSide} />
                   </mesh>
                 </TrimeshColliderWrap>
               )}
@@ -2658,14 +2662,14 @@ function disposeGeometriesIn(obj: object | null | undefined) {
                   {branchGeos.guardrailLeftGeo && (
                     <TrimeshColliderWrap enabled={enablePhysics} geo={branchGeos.guardrailLeftGeo} surface="WALL">
                       <mesh geometry={branchGeos.guardrailLeftGeo} receiveShadow>
-                        <meshStandardMaterial color={wallColor} roughness={0.3} metalness={0.08} side={THREE.DoubleSide} />
+                        <meshStandardMaterial color="#ffffff" vertexColors roughness={0.3} metalness={0.08} side={THREE.DoubleSide} />
                       </mesh>
                     </TrimeshColliderWrap>
                   )}
                   {branchGeos.guardrailRightGeo && (
                     <TrimeshColliderWrap enabled={enablePhysics} geo={branchGeos.guardrailRightGeo} surface="WALL">
                       <mesh geometry={branchGeos.guardrailRightGeo} receiveShadow>
-                        <meshStandardMaterial color={wallColor} roughness={0.3} metalness={0.08} side={THREE.DoubleSide} />
+                        <meshStandardMaterial color="#ffffff" vertexColors roughness={0.3} metalness={0.08} side={THREE.DoubleSide} />
                       </mesh>
                     </TrimeshColliderWrap>
                   )}
@@ -2676,7 +2680,7 @@ function disposeGeometriesIn(obj: object | null | undefined) {
           {/* 2. Faixa Branca Contínua */}
           <TrimeshColliderWrap enabled={enablePhysics} geo={geometries.whiteLineGeo} surface="CURB">
             <mesh geometry={geometries.whiteLineGeo} receiveShadow>
-              <meshStandardMaterial color="#ffffff" roughness={0.4} metalness={0.1} side={THREE.DoubleSide} />
+              <meshStandardMaterial color="#ffffff" vertexColors roughness={0.4} metalness={0.1} side={THREE.DoubleSide} />
             </mesh>
           </TrimeshColliderWrap>
 
@@ -2728,7 +2732,8 @@ function disposeGeometriesIn(obj: object | null | undefined) {
               <TrimeshColliderWrap enabled={enablePhysics} geo={geometries.guardrailLeftGeo} surface="WALL">
                 <mesh geometry={geometries.guardrailLeftGeo} receiveShadow>
                   <meshStandardMaterial
-                    color={wallColor}
+                    color="#ffffff"
+                    vertexColors
                     roughness={0.3}
                     metalness={0.08}
                     side={THREE.DoubleSide}
@@ -2738,7 +2743,8 @@ function disposeGeometriesIn(obj: object | null | undefined) {
               <TrimeshColliderWrap enabled={enablePhysics} geo={geometries.guardrailRightGeo} surface="WALL">
                 <mesh geometry={geometries.guardrailRightGeo} receiveShadow>
                   <meshStandardMaterial
-                    color={wallColor}
+                    color="#ffffff"
+                    vertexColors
                     roughness={0.3}
                     metalness={0.08}
                     side={THREE.DoubleSide}
@@ -2812,7 +2818,7 @@ function disposeGeometriesIn(obj: object | null | undefined) {
           </TrimeshColliderWrap>
           <TrimeshColliderWrap enabled={enablePhysics} geo={pitGeometries.whiteLineGeo} surface="CURB">
             <mesh geometry={pitGeometries.whiteLineGeo} receiveShadow>
-              <meshStandardMaterial color="#ffffff" roughness={0.4} metalness={0.1} side={THREE.DoubleSide} />
+              <meshStandardMaterial color={themeConfig.whiteLineColor || '#ffffff'} roughness={0.4} metalness={0.1} side={THREE.DoubleSide} />
             </mesh>
           </TrimeshColliderWrap>
           <TrimeshColliderWrap enabled={enablePhysics} geo={pitGeometries.pitShoulderGeo} surface="GRASS">

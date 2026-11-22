@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { SplineNode, RoadBranch, computeSpline } from './tracks';
-import { getZone } from './trackCorridor';
+import { getZone, getZoneColor } from './trackCorridor';
 
 export interface BranchGeometries {
   roadGeo: THREE.BufferGeometry | null;
@@ -40,8 +40,10 @@ export function buildBranchGeometries(
   mainSpline?: SplineNode[],
   controlPoints?: SplineNode[],
   mainFrames?: any[],
-  mainWallData?: MainWallData
+  mainWallData?: MainWallData,
+  whiteLineColor: string = '#ffffff'
 ): BranchGeometries {
+  const effectiveWallH = Math.max(1.4, barrierHeight);
   if (!branches || branches.length === 0) {
     return {
       roadGeo: null,
@@ -58,28 +60,26 @@ export function buildBranchGeometries(
     };
   }
 
-  const parseHex = (hex: string): [number, number, number] => {
-    const h = (hex || '#ffffff').replace('#', '');
-    let full = h.length === 3 ? h.split('').map(x => x + x).join('') : h;
-    const num = parseInt(full, 16);
-    if (isNaN(num)) return [0.5, 0.5, 0.5];
-    return [((num >> 16) & 255) / 255, ((num >> 8) & 255) / 255, (num & 255) / 255];
+  const parseHex = (hex: string | undefined, fallback: string = '#ffffff'): [number, number, number] => {
+    const c = new THREE.Color(hex || fallback);
+    return [c.r, c.g, c.b];
   };
 
-  const cRoad = parseHex(asphaltColor);
-  const cWhite = [1, 1, 1];
-  const cYellow = parseHex(curbYellowColor);
-  const cRed = parseHex(curbRedColor);
-  const cGrass = parseHex(grassColor);
-  const cSand = parseHex(sandColor);
-  const cGravel = parseHex(gravelColor);
-  const cWall = parseHex(wallColor);
+  const cRoad = parseHex(asphaltColor, '#64748b');
+  const cWhite = parseHex(whiteLineColor, '#ffffff');
+  const cYellow = parseHex(curbYellowColor, '#facc15');
+  const cRed = parseHex(curbRedColor, '#dc2626');
+  const cGrass = parseHex(grassColor, '#15803d');
+  const cSand = parseHex(sandColor, '#d97706');
+  const cGravel = parseHex(gravelColor, '#78716c');
+  const cWall = parseHex(wallColor, '#f8fafc');
 
   const roadVerts: number[] = [];
   const roadColors: number[] = [];
   const roadIndices: number[] = [];
 
   const whiteLineVerts: number[] = [];
+  const whiteLineColors: number[] = [];
   const whiteLineIndices: number[] = [];
 
   const yellowCurbsVerts: number[] = [];
@@ -281,7 +281,8 @@ function distToSeg2D(px: number, pz: number, ax: number, az: number, bx: number,
       branchRoadPosR[i] = pRoadR.clone();
       roadVerts.push(pRoadL.x, pRoadL.y, pRoadL.z);
       roadVerts.push(pRoadR.x, pRoadR.y, pRoadR.z);
-      roadColors.push(...cRoad, ...cRoad);
+      const cRoadNode = curr.asphaltColor ? parseHex(curr.asphaltColor, asphaltColor) : cRoad;
+      roadColors.push(...cRoadNode, ...cRoadNode);
 
       // Faixa Vermelha de 1.8m nas bordas exteriores
       const pL_out = pRoadL.clone().add(side.clone().multiplyScalar(ribbonW));
@@ -326,6 +327,21 @@ function distToSeg2D(px: number, pz: number, ax: number, az: number, bx: number,
       const wGravelL = getZone(curr, 'gravelWidth', 'L') * scaleL;
       const wGravelR = getZone(curr, 'gravelWidth', 'R') * scaleR;
 
+      const cWhiteL = parseHex(getZoneColor(curr, 'whiteLineColor', 'L', whiteLineColor), whiteLineColor);
+      const cWhiteR = parseHex(getZoneColor(curr, 'whiteLineColor', 'R', whiteLineColor), whiteLineColor);
+      const cYellowL = parseHex(getZoneColor(curr, 'curbYellowColor', 'L', curbYellowColor), curbYellowColor);
+      const cYellowR = parseHex(getZoneColor(curr, 'curbYellowColor', 'R', curbYellowColor), curbYellowColor);
+      const cRedL = parseHex(getZoneColor(curr, 'curbRedColor', 'L', curbRedColor), curbRedColor);
+      const cRedR = parseHex(getZoneColor(curr, 'curbRedColor', 'R', curbRedColor), curbRedColor);
+      const cGrassL = parseHex(getZoneColor(curr, 'grassColor', 'L', grassColor), grassColor);
+      const cGrassR = parseHex(getZoneColor(curr, 'grassColor', 'R', grassColor), grassColor);
+      const cSandL = parseHex(getZoneColor(curr, 'sandColor', 'L', sandColor), sandColor);
+      const cSandR = parseHex(getZoneColor(curr, 'sandColor', 'R', sandColor), sandColor);
+      const cGravelL = parseHex(getZoneColor(curr, 'gravelColor', 'L', gravelColor), gravelColor);
+      const cGravelR = parseHex(getZoneColor(curr, 'gravelColor', 'R', gravelColor), gravelColor);
+      const cWallL = parseHex(getZoneColor(curr, 'wallColor', 'L', wallColor), wallColor);
+      const cWallR = parseHex(getZoneColor(curr, 'wallColor', 'R', wallColor), wallColor);
+
       // 1. Linha Branca
       const pWhiteL = pRoadL.clone().add(side.clone().multiplyScalar(wWhiteL)).add(new THREE.Vector3(0, 0.012, 0));
       const pWhiteR = pRoadR.clone().sub(side.clone().multiplyScalar(wWhiteR)).add(new THREE.Vector3(0, 0.012, 0));
@@ -333,6 +349,7 @@ function distToSeg2D(px: number, pz: number, ax: number, az: number, bx: number,
       whiteLineVerts.push(pWhiteL.x, pWhiteL.y, pWhiteL.z);
       whiteLineVerts.push(pRoadR.x, pRoadR.y, pRoadR.z);
       whiteLineVerts.push(pWhiteR.x, pWhiteR.y, pWhiteR.z);
+      whiteLineColors.push(...cWhiteL, ...cWhiteL, ...cWhiteR, ...cWhiteR);
 
       // 2. Zebra Amarela
       const pYellowL = pWhiteL.clone().add(side.clone().multiplyScalar(wYellowL)).add(new THREE.Vector3(0, 0.016, 0));
@@ -341,7 +358,7 @@ function distToSeg2D(px: number, pz: number, ax: number, az: number, bx: number,
       yellowCurbsVerts.push(pYellowL.x, pYellowL.y, pYellowL.z);
       yellowCurbsVerts.push(pWhiteR.x, pWhiteR.y, pWhiteR.z);
       yellowCurbsVerts.push(pYellowR.x, pYellowR.y, pYellowR.z);
-      yellowCurbsColors.push(...cYellow, ...cYellow, ...cYellow, ...cYellow);
+      yellowCurbsColors.push(...cYellowL, ...cYellowL, ...cYellowR, ...cYellowR);
 
       // 3. Zebra Vermelha
       const pRedL = pYellowL.clone().add(side.clone().multiplyScalar(wRedL)).add(new THREE.Vector3(0, 0.020, 0));
@@ -350,7 +367,7 @@ function distToSeg2D(px: number, pz: number, ax: number, az: number, bx: number,
       redCurbsVerts.push(pRedL.x, pRedL.y, pRedL.z);
       redCurbsVerts.push(pYellowR.x, pYellowR.y, pYellowR.z);
       redCurbsVerts.push(pRedR.x, pRedR.y, pRedR.z);
-      redCurbsColors.push(...cRed, ...cRed, ...cRed, ...cRed);
+      redCurbsColors.push(...cRedL, ...cRedL, ...cRedR, ...cRedR);
 
       // 4. Relva
       const pGrassL = pRedL.clone().add(side.clone().multiplyScalar(wGrassL));
@@ -359,7 +376,7 @@ function distToSeg2D(px: number, pz: number, ax: number, az: number, bx: number,
       grassVerts.push(pGrassL.x, pGrassL.y, pGrassL.z);
       grassVerts.push(pRedR.x, pRedR.y, pRedR.z);
       grassVerts.push(pGrassR.x, pGrassR.y, pGrassR.z);
-      grassColors.push(...cGrass, ...cGrass, ...cGrass, ...cGrass);
+      grassColors.push(...cGrassL, ...cGrassL, ...cGrassR, ...cGrassR);
 
       // 5. Areia
       const pSandL = pGrassL.clone().add(side.clone().multiplyScalar(wSandL));
@@ -368,7 +385,7 @@ function distToSeg2D(px: number, pz: number, ax: number, az: number, bx: number,
       sandVerts.push(pSandL.x, pSandL.y, pSandL.z);
       sandVerts.push(pGrassR.x, pGrassR.y, pGrassR.z);
       sandVerts.push(pSandR.x, pSandR.y, pSandR.z);
-      sandColors.push(...cSand, ...cSand, ...cSand, ...cSand);
+      sandColors.push(...cSandL, ...cSandL, ...cSandR, ...cSandR);
 
       // 6. Gravilha
       const pGravelL = pSandL.clone().add(side.clone().multiplyScalar(wGravelL));
@@ -377,12 +394,12 @@ function distToSeg2D(px: number, pz: number, ax: number, az: number, bx: number,
       gravelVerts.push(pGravelL.x, pGravelL.y, pGravelL.z);
       gravelVerts.push(pSandR.x, pSandR.y, pSandR.z);
       gravelVerts.push(pGravelR.x, pGravelR.y, pGravelR.z);
-      gravelColors.push(...cGravel, ...cGravel, ...cGravel, ...cGravel);
+      gravelColors.push(...cGravelL, ...cGravelL, ...cGravelR, ...cGravelR);
 
       // 7. Muro Esquerdo
       const pWallBaseInnerL = pGravelL.clone();
       branchWallPosL[i] = pWallBaseInnerL.clone();
-      const hL = suppressL ? 0 : barrierHeight;
+      const hL = suppressL ? 0 : effectiveWallH;
       const pWallTopInnerL = pWallBaseInnerL.clone().add(new THREE.Vector3(0, hL, 0));
       const pWallTopOuterL = pWallTopInnerL.clone().add(side.clone().multiplyScalar(barrierThickness));
       const pWallBaseOuterL = pWallBaseInnerL.clone().add(side.clone().multiplyScalar(barrierThickness));
@@ -390,12 +407,12 @@ function distToSeg2D(px: number, pz: number, ax: number, az: number, bx: number,
       wallLVerts.push(pWallTopInnerL.x, pWallTopInnerL.y, pWallTopInnerL.z);
       wallLVerts.push(pWallTopOuterL.x, pWallTopOuterL.y, pWallTopOuterL.z);
       wallLVerts.push(pWallBaseOuterL.x, pWallBaseOuterL.y, pWallBaseOuterL.z);
-      wallLColors.push(...cWall, ...cWall, ...cWall, ...cWall);
+      wallLColors.push(...cWallL, ...cWallL, ...cWallL, ...cWallL);
 
       // 8. Muro Direito
       const pWallBaseInnerR = pGravelR.clone();
       branchWallPosR[i] = pWallBaseInnerR.clone();
-      const hR = suppressR ? 0 : barrierHeight;
+      const hR = suppressR ? 0 : effectiveWallH;
       const pWallTopInnerR = pWallBaseInnerR.clone().add(new THREE.Vector3(0, hR, 0));
       const pWallTopOuterR = pWallTopInnerR.clone().sub(side.clone().multiplyScalar(barrierThickness));
       const pWallBaseOuterR = pWallBaseInnerR.clone().sub(side.clone().multiplyScalar(barrierThickness));
@@ -403,7 +420,7 @@ function distToSeg2D(px: number, pz: number, ax: number, az: number, bx: number,
       wallRVerts.push(pWallTopInnerR.x, pWallTopInnerR.y, pWallTopInnerR.z);
       wallRVerts.push(pWallTopOuterR.x, pWallTopOuterR.y, pWallTopOuterR.z);
       wallRVerts.push(pWallBaseOuterR.x, pWallBaseOuterR.y, pWallBaseOuterR.z);
-      wallRColors.push(...cWall, ...cWall, ...cWall, ...cWall);
+      wallRColors.push(...cWallR, ...cWallR, ...cWallR, ...cWallR);
 
       if (i < M - 1) {
         const v0 = baseROffset + i * 2;
@@ -487,7 +504,6 @@ function distToSeg2D(px: number, pz: number, ax: number, az: number, bx: number,
     if (mainWallData && mainFrames && mainFrames.length >= 3) {
       const Nmain = mainFrames.length;
       const usedMainTransitions = new Set<string>();
-      const [cr, cg, cb] = cWall;
 
       const bridgeSideTransitions = (isL: boolean) => {
         const suppArr = isL ? suppressLArray : suppressRArray;
@@ -502,6 +518,10 @@ function distToSeg2D(px: number, pz: number, ax: number, az: number, bx: number,
 
           const B_pos = wallPosArr[bIdx];
           const B_road = roadPosArr[bIdx];
+          const [cr, cg, cb] = parseHex(
+            getZoneColor(densePoints[bIdx], 'wallColor', isL ? 'L' : 'R', wallColor),
+            wallColor
+          );
           const towardIdx = prevSupp ? Math.max(0, bIdx - 1) : Math.min(M - 1, bIdx + 1);
           const bTan = new THREE.Vector3().subVectors(branchCenterPos[towardIdx], branchCenterPos[bIdx]);
           bTan.y = 0;
@@ -580,7 +600,7 @@ function distToSeg2D(px: number, pz: number, ax: number, az: number, bx: number,
             toIsland.y = 0;
             if (outN.dot(toIsland) < 0) outN.negate();
 
-            const pTopIn = pt.clone().add(new THREE.Vector3(0, barrierHeight, 0));
+            const pTopIn = pt.clone().add(new THREE.Vector3(0, effectiveWallH, 0));
             const pTopOut = pTopIn.clone().addScaledVector(outN, barrierThickness);
             const pBaseOut = pt.clone().addScaledVector(outN, barrierThickness);
 
@@ -660,7 +680,7 @@ function distToSeg2D(px: number, pz: number, ax: number, az: number, bx: number,
 
   return {
     roadGeo: makeGeo(roadVerts, roadIndices, roadColors),
-    whiteLineGeo: makeGeo(whiteLineVerts, whiteLineIndices),
+    whiteLineGeo: makeGeo(whiteLineVerts, whiteLineIndices, whiteLineColors),
     yellowCurbsGeo: makeGeo(yellowCurbsVerts, yellowCurbsIndices, yellowCurbsColors),
     redCurbsGeo: makeGeo(redCurbsVerts, redCurbsIndices, redCurbsColors),
     grassShoulderGeo: makeGeo(grassVerts, grassIndices, grassColors),

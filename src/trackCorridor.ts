@@ -55,6 +55,36 @@ export const ZONE_DEFAULTS: Record<ZoneKey, number> = {
 /** Faixas que ficam entre o asfalto e o muro (tudo menos o muro) */
 export const BERMA_KEYS: ZoneKey[] = ZONE_KEYS.filter(k => k !== 'wallThickness');
 
+export const ZONE_COLOR_KEYS = [
+  'whiteLineColor',
+  'curbYellowColor',
+  'curbRedColor',
+  'grassColor',
+  'sandColor',
+  'gravelColor',
+  'wallColor'
+] as const;
+
+export type ZoneColorKey = typeof ZONE_COLOR_KEYS[number];
+
+/**
+ * Lê a cor de uma faixa ou muro num lado.
+ * Prioridade: cor específica do lado (ex: grassColorL) -> cor comum (grassColor) -> fallback.
+ */
+export function getZoneColor(
+  node: SplineNode,
+  key: ZoneColorKey,
+  side: ZoneSide,
+  fallback: string
+): string {
+  const n = node as unknown as Record<string, unknown>;
+  const sideVal = n[key + side];
+  if (typeof sideVal === 'string' && sideVal.trim().length > 0) return sideVal;
+  const baseVal = n[key];
+  if (typeof baseVal === 'string' && baseVal.trim().length > 0) return baseVal;
+  return fallback;
+}
+
 /**
  * Lê a largura de uma faixa num lado.
  * Prioridade: valor específico do lado (ex: grassWidthL) -> valor comum (grassWidth) -> defeito.
@@ -101,18 +131,12 @@ export function interpZones(p1: SplineNode, p2: SplineNode, t: number): Partial<
     }
   }
 
-  const colorKeys = [
-    "asphaltColor",
-    "whiteLineColor",
-    "curbYellowColor",
-    "curbRedColor",
-    "grassColor",
-    "sandColor",
-    "gravelColor",
-    "wallColor"
-  ] as const;
+  const allColorFields: string[] = ['asphaltColor'];
+  for (const ck of ZONE_COLOR_KEYS) {
+    allColorFields.push(ck, ck + 'L', ck + 'R');
+  }
 
-  for (const ck of colorKeys) {
+  for (const ck of allColorFields) {
     const c1 = (p1 as any)[ck];
     const c2 = (p2 as any)[ck];
     if (c1 && c2) {

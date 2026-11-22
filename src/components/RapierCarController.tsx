@@ -17,8 +17,8 @@ import {
 
 const ZERO_VEC3: [number, number, number] = [0, 0, 0];
 const CAR_RIGIDBODY_USER_DATA = { surface: 'CAR' };
-const CHASSIS_COLLIDER_ARGS: [number, number, number] = [0.92, 0.24, 1.90];
-const CHASSIS_COLLIDER_POS: [number, number, number] = [0, 0.96, 0.05];
+const CHASSIS_COLLIDER_ARGS: [number, number, number] = [0.92, 0.34, 1.90];
+const CHASSIS_COLLIDER_POS: [number, number, number] = [0, 0.90, 0.05];
 const VISUAL_GROUP_POS: [number, number, number] = [0, 0.02, 0];
 
 const SURFACE_TIER: Record<SurfaceType, number> = {

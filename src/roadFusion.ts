@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import polygonClipping from 'polygon-clipping';
 import { SplineNode, RoadBranch, computeSpline } from './tracks';
 import { untanglePolyline3D, roundTightWallCorners3D } from './wallGeometry';
-import { getZone } from './trackCorridor';
+import { getZone, getZoneColor } from './trackCorridor';
 
 export interface UnifiedRoadOptions {
   asphaltColor?: string;
@@ -110,13 +110,13 @@ function extractZoneSample(
     wSand: z('sandWidth'),
     wGravel: z('gravelWidth'),
     cAsphalt: parseHexRGB(node.asphaltColor, defaults.asphaltColor),
-    cWhite: parseHexRGB(node.whiteLineColor, defaults.whiteLineColor),
-    cYellow: parseHexRGB(node.curbYellowColor, defaults.curbYellowColor),
-    cRed: parseHexRGB(node.curbRedColor, defaults.curbRedColor),
-    cGrass: parseHexRGB(node.grassColor, defaults.grassColor),
-    cSand: parseHexRGB(node.sandColor, defaults.sandColor),
-    cGravel: parseHexRGB(node.gravelColor, defaults.gravelColor),
-    cWall: parseHexRGB(node.wallColor, defaults.wallColor),
+    cWhite: parseHexRGB(getZoneColor(node, 'whiteLineColor', side, defaults.whiteLineColor), defaults.whiteLineColor),
+    cYellow: parseHexRGB(getZoneColor(node, 'curbYellowColor', side, defaults.curbYellowColor), defaults.curbYellowColor),
+    cRed: parseHexRGB(getZoneColor(node, 'curbRedColor', side, defaults.curbRedColor), defaults.curbRedColor),
+    cGrass: parseHexRGB(getZoneColor(node, 'grassColor', side, defaults.grassColor), defaults.grassColor),
+    cSand: parseHexRGB(getZoneColor(node, 'sandColor', side, defaults.sandColor), defaults.sandColor),
+    cGravel: parseHexRGB(getZoneColor(node, 'gravelColor', side, defaults.gravelColor), defaults.gravelColor),
+    cWall: parseHexRGB(getZoneColor(node, 'wallColor', side, defaults.wallColor), defaults.wallColor),
   };
 }
 
@@ -503,7 +503,8 @@ function buildClosedWallForRing(
   isHole: boolean,
   wallWidth: number,
   wallHeight: number,
-  colorRGB: [number, number, number],
+  colorsPerVertex: [number, number, number][],
+  defaultRGB: [number, number, number],
   verts: number[],
   colors: number[],
   indices: number[],
@@ -546,7 +547,8 @@ function buildClosedWallForRing(
     verts.push(curr.x + norm.x * wallWidth, yTop, curr.z + norm.y * wallWidth);
     verts.push(curr.x + norm.x * wallWidth, yBot, curr.z + norm.y * wallWidth);
 
-    colors.push(...colorRGB, ...colorRGB, ...colorRGB, ...colorRGB);
+    const col = colorsPerVertex[i] || defaultRGB;
+    colors.push(...col, ...col, ...col, ...col);
   }
 
   for (let i = 0; i < N; i++) {
@@ -621,7 +623,7 @@ export function buildUnifiedRoadNetwork(
     wallColor: options.wallColor || '#e2e8f0',
   };
   const wallWidth = options.wallWidth ?? 0.8;
-  const wallHeight = options.wallHeight ?? 1.25;
+  const wallHeight = Math.max(1.4, options.wallHeight ?? 1.4);
   const groundY = options.groundY ?? -0.12;
   const overpassMask = options.overpassMask;
   const mainHalfWidths = options.mainHalfWidths;
@@ -1388,7 +1390,8 @@ export function buildUnifiedRoadNetwork(
             isHole,
             wallWidth,
             wallHeight,
-            sampled[0]?.zone.cWall || parseHexRGB(undefined, defaults.wallColor),
+            sampled.map((s) => s.zone.cWall),
+            parseHexRGB(undefined, defaults.wallColor),
             wallVerts,
             wallColors,
             wallIndices,

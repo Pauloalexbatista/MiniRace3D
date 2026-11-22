@@ -38,15 +38,29 @@ export interface SplineNode {
   sandWidthL?: number; sandWidthR?: number;
   gravelWidthL?: number; gravelWidthR?: number;
   wallThicknessL?: number; wallThicknessR?: number;
-  // Cores personalizadas por ponto
+  // Cores personalizadas por ponto e por lado
   asphaltColor?: string;
   whiteLineColor?: string;
+  whiteLineColorL?: string;
+  whiteLineColorR?: string;
   curbYellowColor?: string;
+  curbYellowColorL?: string;
+  curbYellowColorR?: string;
   curbRedColor?: string;
+  curbRedColorL?: string;
+  curbRedColorR?: string;
   grassColor?: string;
+  grassColorL?: string;
+  grassColorR?: string;
   sandColor?: string;
+  sandColorL?: string;
+  sandColorR?: string;
   gravelColor?: string;
+  gravelColorL?: string;
+  gravelColorR?: string;
   wallColor?: string;
+  wallColorL?: string;
+  wallColorR?: string;
 }
 
 export type SprayCanType = 'mountain' | 'forest' | 'city' | 'grandstand' | 'pitbox' | 'desert' | 'eraser';

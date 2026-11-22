@@ -1695,9 +1695,9 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
             onMovePoint={handleMovePoint}
             onDragStateChange={(drag) => setIsDraggingNode(drag)}
             showOutlines={showOutlines}
-            showGuardrails={showGuardrails && studioTab !== 'track2d'}
+            showGuardrails={showGuardrails && (!isStudioOpen || studioTab !== 'track2d')}
             showEmbankments={showEmbankments}
-            showLayers={studioTab !== 'track2d'}
+            showLayers={!isStudioOpen || studioTab !== 'track2d'}
             showControlPoints={showControlPoints && !isDrivingMode && studioTab !== 'scenery'}
             showRedRibbon={showRedRibbon && studioTab !== 'scenery'}
             theme={theme}

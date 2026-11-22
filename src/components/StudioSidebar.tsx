@@ -8,7 +8,8 @@ import {
   MIN_TRACK_LENGTH_KM,
   MAX_TRACK_LENGTH_KM
 } from '../tracks';
-import { getZone, ZONE_KEYS, ZONE_DEFAULTS, ZoneKey } from '../trackCorridor';
+import { getZone, getZoneColor, ZONE_KEYS, ZONE_COLOR_KEYS, ZONE_DEFAULTS, ZoneKey, ZoneColorKey } from '../trackCorridor';
+import { TRACK_THEMES } from '../trackProfile';
 import { CarClass } from './Car3D';
 import { CAR_CLASS_DEFAULTS, CarTuning } from './RapierCarController';
 import {
@@ -1165,6 +1166,19 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
           };
 
           const asphaltW = activePt?.width ?? 18.0;
+          const activeThemeCfg = TRACK_THEMES[props.trackThemeId] || TRACK_THEMES.f1_modern;
+          const defaultThemeColor: Record<ZoneColorKey, string> = {
+            whiteLineColor: activeThemeCfg.whiteLineColor || '#ffffff',
+            curbYellowColor: activeThemeCfg.curbWarningColor || '#facc15',
+            curbRedColor: activeThemeCfg.curbApexColor || '#dc2626',
+            grassColor: activeThemeCfg.grassColor || '#22773b',
+            sandColor: activeThemeCfg.sandColor || '#d97706',
+            gravelColor: activeThemeCfg.gravelColor || '#78716c',
+            wallColor: activeThemeCfg.wallColor || '#ffffff',
+          };
+          const colorOf = (ck: ZoneColorKey, side: 'L' | 'R') =>
+            activePt ? getZoneColor(activePt, ck, side, defaultThemeColor[ck]) : defaultThemeColor[ck];
+          const curAsphaltColor = activePt?.asphaltColor || activeThemeCfg.asphaltColor || '#64748b';
           const zoneOf = (key: ZoneKey, side: 'L' | 'R') => activePt ? getZone(activePt, key, side) : ZONE_DEFAULTS[key];
           const whiteLineWL = zoneOf('whiteLineWidth', 'L');
           const whiteLineWR = zoneOf('whiteLineWidth', 'R');
@@ -1395,12 +1409,26 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
                         wallThicknessR: prevPt.wallThicknessR,
                         asphaltColor: prevPt.asphaltColor,
                         whiteLineColor: prevPt.whiteLineColor,
+                        whiteLineColorL: prevPt.whiteLineColorL,
+                        whiteLineColorR: prevPt.whiteLineColorR,
                         curbYellowColor: prevPt.curbYellowColor,
+                        curbYellowColorL: prevPt.curbYellowColorL,
+                        curbYellowColorR: prevPt.curbYellowColorR,
                         curbRedColor: prevPt.curbRedColor,
+                        curbRedColorL: prevPt.curbRedColorL,
+                        curbRedColorR: prevPt.curbRedColorR,
                         grassColor: prevPt.grassColor,
+                        grassColorL: prevPt.grassColorL,
+                        grassColorR: prevPt.grassColorR,
                         sandColor: prevPt.sandColor,
+                        sandColorL: prevPt.sandColorL,
+                        sandColorR: prevPt.sandColorR,
                         gravelColor: prevPt.gravelColor,
+                        gravelColorL: prevPt.gravelColorL,
+                        gravelColorR: prevPt.gravelColorR,
                         wallColor: prevPt.wallColor,
+                        wallColorL: prevPt.wallColorL,
+                        wallColorR: prevPt.wallColorR,
                         z: prevPt.z ?? 0,
                         banking: prevPt.banking,
                       }, false);
@@ -1484,35 +1512,35 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
                       marginBottom: 10
                     }}>
                       {[
-                        { k: 'wallThickness', c: '#94a3b8' },
-                        { k: 'gravelWidth', c: '#57534e' },
-                        { k: 'sandWidth', c: '#d97706' },
-                        { k: 'grassWidth', c: '#15803d' },
-                        { k: 'curbRedWidth', c: '#ef4444' },
-                        { k: 'curbYellowWidth', c: '#facc15' },
-                        { k: 'whiteLineWidth', c: '#ffffff' }
+                        { k: 'wallThickness', c: colorOf('wallColor', 'L') },
+                        { k: 'gravelWidth', c: colorOf('gravelColor', 'L') },
+                        { k: 'sandWidth', c: colorOf('sandColor', 'L') },
+                        { k: 'grassWidth', c: colorOf('grassColor', 'L') },
+                        { k: 'curbRedWidth', c: colorOf('curbRedColor', 'L') },
+                        { k: 'curbYellowWidth', c: colorOf('curbYellowColor', 'L') },
+                        { k: 'whiteLineWidth', c: colorOf('whiteLineColor', 'L') }
                       ].map(z => (
                         <div key={'L' + z.k} style={{ width: `${(zoneOf(z.k as ZoneKey, 'L') / totalFaixa) * 100}%`, background: z.c, opacity: zoneSide === 'R' ? 0.35 : 1 }} title={`${z.k} Esq: ${zoneOf(z.k as ZoneKey, 'L').toFixed(1)}m`} />
                       ))}
                       <div style={{
                         width: `${(asphaltW / totalFaixa) * 100}%`,
-                        background: '#0f172a',
+                        background: curAsphaltColor,
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
                         borderLeft: '1px solid rgba(255,255,255,0.25)',
                         borderRight: '1px solid rgba(255,255,255,0.25)'
                       }}>
-                        <span style={{ fontSize: 10, color: '#38bdf8', fontWeight: 900 }}>{asphaltW.toFixed(1)}m</span>
+                        <span style={{ fontSize: 10, color: '#fff', fontWeight: 900, textShadow: '0 1px 2px rgba(0,0,0,0.9)' }}>{asphaltW.toFixed(1)}m</span>
                       </div>
                       {[
-                        { k: 'wallThickness', c: '#94a3b8' },
-                        { k: 'gravelWidth', c: '#57534e' },
-                        { k: 'sandWidth', c: '#d97706' },
-                        { k: 'grassWidth', c: '#15803d' },
-                        { k: 'curbRedWidth', c: '#ef4444' },
-                        { k: 'curbYellowWidth', c: '#facc15' },
-                        { k: 'whiteLineWidth', c: '#ffffff' }
+                        { k: 'wallThickness', c: colorOf('wallColor', 'R') },
+                        { k: 'gravelWidth', c: colorOf('gravelColor', 'R') },
+                        { k: 'sandWidth', c: colorOf('sandColor', 'R') },
+                        { k: 'grassWidth', c: colorOf('grassColor', 'R') },
+                        { k: 'curbRedWidth', c: colorOf('curbRedColor', 'R') },
+                        { k: 'curbYellowWidth', c: colorOf('curbYellowColor', 'R') },
+                        { k: 'whiteLineWidth', c: colorOf('whiteLineColor', 'R') }
                       ].slice().reverse().map(z => (
                         <div key={'R' + z.k} style={{ width: `${(zoneOf(z.k as ZoneKey, 'R') / totalFaixa) * 100}%`, background: z.c, opacity: zoneSide === 'L' ? 0.35 : 1 }} title={`${z.k} Dir: ${zoneOf(z.k as ZoneKey, 'R').toFixed(1)}m`} />
                       ))}
@@ -1520,16 +1548,19 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
 
                     {/* CONTROLOS DE AJUSTE DIRETO PARA CADA UMA DAS VARIÁVEIS */}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 5, marginBottom: 8 }}>
-                      {[
-                        { key: 'width', name: 'Asfalto', valL: asphaltW, valR: asphaltW, step: 1.0, min: 6.0, max: 32.0, bg: '#0284c7', text: '#fff', colorKey: 'asphaltColor', curColor: activePt?.asphaltColor || '#64748b' },
-                        { key: 'whiteLineWidth', name: 'Linha Branc', valL: whiteLineWL, valR: whiteLineWR, step: 0.1, min: 0.0, max: 5.0, bg: '#ffffff', text: '#000', colorKey: 'whiteLineColor', curColor: activePt?.whiteLineColor || '#ffffff' },
-                        { key: 'curbYellowWidth', name: 'Z. Amarela', valL: curbYellowWL, valR: curbYellowWR, step: 0.1, min: 0.0, max: 5.0, bg: '#facc15', text: '#000', colorKey: 'curbYellowColor', curColor: activePt?.curbYellowColor || '#facc15' },
-                        { key: 'curbRedWidth', name: 'Z. Vermelha', valL: curbRedWL, valR: curbRedWR, step: 0.1, min: 0.0, max: 5.0, bg: '#ef4444', text: '#fff', colorKey: 'curbRedColor', curColor: activePt?.curbRedColor || '#dc2626' },
-                        { key: 'grassWidth', name: 'Relva', valL: grassWL, valR: grassWR, step: 0.5, min: 0.0, max: 25.0, bg: '#15803d', text: '#fff', colorKey: 'grassColor', curColor: activePt?.grassColor || '#22773b' },
-                        { key: 'sandWidth', name: 'Areia', valL: sandWL, valR: sandWR, step: 0.5, min: 0.0, max: 25.0, bg: '#d97706', text: '#fff', colorKey: 'sandColor', curColor: activePt?.sandColor || '#d97706' },
-                        { key: 'gravelWidth', name: 'Gravilha', valL: gravelWL, valR: gravelWR, step: 0.5, min: 0.0, max: 25.0, bg: '#57534e', text: '#fff', colorKey: 'gravelColor', curColor: activePt?.gravelColor || '#78716c' },
-                        { key: 'wallThickness', name: 'Muro', valL: wallWL, valR: wallWR, step: 0.1, min: 0.2, max: 2.0, bg: '#94a3b8', text: '#000', colorKey: 'wallColor', curColor: activePt?.wallColor || '#ffffff' }
-                      ].map((item) => {
+                      {(() => {
+                        const colorSide: 'L' | 'R' = zoneSide === 'R' ? 'R' : 'L';
+                        return [
+                          { key: 'width', name: 'Asfalto', valL: asphaltW, valR: asphaltW, step: 1.0, min: 6.0, max: 32.0, bg: '#0284c7', text: '#fff', colorKey: 'asphaltColor', curColor: curAsphaltColor },
+                          { key: 'whiteLineWidth', name: 'Linha Branc', valL: whiteLineWL, valR: whiteLineWR, step: 0.1, min: 0.0, max: 5.0, bg: '#ffffff', text: '#000', colorKey: 'whiteLineColor', curColor: colorOf('whiteLineColor', colorSide) },
+                          { key: 'curbYellowWidth', name: 'Z. Amarela', valL: curbYellowWL, valR: curbYellowWR, step: 0.1, min: 0.0, max: 5.0, bg: '#facc15', text: '#000', colorKey: 'curbYellowColor', curColor: colorOf('curbYellowColor', colorSide) },
+                          { key: 'curbRedWidth', name: 'Z. Vermelha', valL: curbRedWL, valR: curbRedWR, step: 0.1, min: 0.0, max: 5.0, bg: '#ef4444', text: '#fff', colorKey: 'curbRedColor', curColor: colorOf('curbRedColor', colorSide) },
+                          { key: 'grassWidth', name: 'Relva', valL: grassWL, valR: grassWR, step: 0.5, min: 0.0, max: 25.0, bg: '#15803d', text: '#fff', colorKey: 'grassColor', curColor: colorOf('grassColor', colorSide) },
+                          { key: 'sandWidth', name: 'Areia', valL: sandWL, valR: sandWR, step: 0.5, min: 0.0, max: 25.0, bg: '#d97706', text: '#fff', colorKey: 'sandColor', curColor: colorOf('sandColor', colorSide) },
+                          { key: 'gravelWidth', name: 'Gravilha', valL: gravelWL, valR: gravelWR, step: 0.5, min: 0.0, max: 25.0, bg: '#57534e', text: '#fff', colorKey: 'gravelColor', curColor: colorOf('gravelColor', colorSide) },
+                          { key: 'wallThickness', name: 'Muro', valL: wallWL, valR: wallWR, step: 0.1, min: 0.2, max: 2.0, bg: '#94a3b8', text: '#000', colorKey: 'wallColor', curColor: colorOf('wallColor', colorSide) }
+                        ];
+                      })().map((item) => {
                         const isMixedBoth = zoneSide === 'both' && item.key !== 'width' && Math.abs(item.valL - item.valR) > 0.04;
                         const displayVal = isMixedBoth
                           ? `${item.valL.toFixed(1)} - ${item.valR.toFixed(1)}`
@@ -1593,7 +1624,20 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
                                 value={item.curColor}
                                 onChange={(e) => {
                                   if (!props.onUpdateNodeProperties) return;
-                                  props.onUpdateNodeProperties({ [item.colorKey]: e.target.value } as any);
+                                  const nextCol = e.target.value;
+                                  if (item.colorKey === 'asphaltColor') {
+                                    props.onUpdateNodeProperties({ asphaltColor: nextCol });
+                                  } else if (captureSide === 'both') {
+                                    props.onUpdateNodeProperties({
+                                      [item.colorKey]: nextCol,
+                                      [item.colorKey + 'L']: nextCol,
+                                      [item.colorKey + 'R']: nextCol
+                                    } as Partial<SplineNode>);
+                                  } else {
+                                    props.onUpdateNodeProperties({
+                                      [item.colorKey + captureSide]: nextCol
+                                    } as Partial<SplineNode>);
+                                  }
                                 }}
                                 title={item.name}
                                 style={{
@@ -1624,14 +1668,13 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
                           upd[k + 'L'] = zoneOf(k, 'L');
                           upd[k + 'R'] = zoneOf(k, 'R');
                         });
-                        if (activePt.asphaltColor) upd.asphaltColor = activePt.asphaltColor;
-                        if (activePt.whiteLineColor) upd.whiteLineColor = activePt.whiteLineColor;
-                        if (activePt.curbYellowColor) upd.curbYellowColor = activePt.curbYellowColor;
-                        if (activePt.curbRedColor) upd.curbRedColor = activePt.curbRedColor;
-                        if (activePt.grassColor) upd.grassColor = activePt.grassColor;
-                        if (activePt.sandColor) upd.sandColor = activePt.sandColor;
-                        if (activePt.gravelColor) upd.gravelColor = activePt.gravelColor;
-                        if (activePt.wallColor) upd.wallColor = activePt.wallColor;
+                        upd.asphaltColor = activePt.asphaltColor;
+                        const activePtRecord = activePt as unknown as Record<string, unknown>;
+                        ZONE_COLOR_KEYS.forEach(ck => {
+                          upd[ck] = activePtRecord[ck] as string | undefined;
+                          upd[ck + 'L'] = activePtRecord[ck + 'L'] as string | undefined;
+                          upd[ck + 'R'] = activePtRecord[ck + 'R'] as string | undefined;
+                        });
                         props.onUpdateNodeProperties(upd as Partial<SplineNode>, true);
                       }}
                       style={{

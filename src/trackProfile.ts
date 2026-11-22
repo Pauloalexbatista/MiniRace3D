@@ -69,8 +69,8 @@ export const TRACK_THEMES_INTERNAL: Record<string, TrackThemeConfig> = {
     curbMaxApexWidth: 0,
     curbMaxWarningWidth: 0,
     barrierType: 'natural_slope',
-    barrierHeight: 0.90,
-    barrierThickness: 0.50,
+    barrierHeight: 1.45,
+    barrierThickness: 0.70,
     asphaltColor: '#5c4533', // Terra batida / cascalho castanho
     pitAsphaltColor: '#453224',
     whiteLineColor: '#8c735d',
@@ -80,7 +80,9 @@ export const TRACK_THEMES_INTERNAL: Record<string, TrackThemeConfig> = {
     embankColor: '#2d2215',
     wallColor: '#9ca3af', // Rails metálicos ou madeira
     outlineColor: '#281d13',
-    pitMarkingColor: '#f97316'
+    pitMarkingColor: '#f97316',
+    sandColor: '#b45309',
+    gravelColor: '#78716c'
   },
   classic_street: {
     id: 'classic_street',
@@ -104,7 +106,9 @@ export const TRACK_THEMES_INTERNAL: Record<string, TrackThemeConfig> = {
     embankColor: '#166534',
     wallColor: '#e5e7eb',
     outlineColor: '#111827',
-    pitMarkingColor: '#38bdf8'
+    pitMarkingColor: '#38bdf8',
+    sandColor: '#d97706',
+    gravelColor: '#78716c'
   }
 };
 // Alias mapping to support both canonical and shorthand ids ('f1', 'rally', 'monaco')
