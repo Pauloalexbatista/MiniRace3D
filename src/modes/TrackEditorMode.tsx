@@ -1547,7 +1547,7 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
           <meshBasicMaterial visible={false} />
         </mesh>
 
-        {/* 3D Scenery & Relief (Mountains, Forests, Cities, Grandstands, Desert) */}
+        {/* 3D Scenery & Relief (Mountains, Forests, Cities, Grandstands, Desert, Water) */}
         <Scenery3D
           patches={sceneryPatches}
           spline={currentSpline}
@@ -2503,7 +2503,12 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
         carTuning={carTuning}
         onChangeCarTuning={setCarTuning}
         activeSpray={activeSpray}
-        onChangeActiveSpray={setActiveSpray}
+        onChangeActiveSpray={(s) => {
+          setActiveSpray(s);
+          if (s && s !== 'water' && s !== 'eraser') {
+            setSprayRadius((r) => Math.min(r, 180));
+          }
+        }}
         sprayRadius={sprayRadius}
         onChangeSprayRadius={setSprayRadius}
         sprayIntensity={sprayIntensity}

@@ -63,7 +63,7 @@ export interface SplineNode {
   wallColorR?: string;
 }
 
-export type SprayCanType = 'mountain' | 'forest' | 'city' | 'grandstand' | 'pitbox' | 'desert' | 'eraser';
+export type SprayCanType = 'mountain' | 'forest' | 'city' | 'grandstand' | 'pitbox' | 'desert' | 'water' | 'eraser';
 
 export interface SceneryPatch {
   id: string;

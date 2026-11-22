@@ -1,4 +1,5 @@
 import React, { useMemo, useEffect, useLayoutEffect, useRef } from 'react';
+import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { SplineNode, RoadBranch, SceneryPatch, SprayCanType, computeSpline } from '../tracks';
 import { getZone } from '../trackCorridor';
@@ -183,6 +184,64 @@ export function buildRoadGuards(
   return guards;
 }
 
+function smin(a: number, b: number, k: number): number {
+  const h = Math.max(k - Math.abs(a - b), 0) / k;
+  return Math.min(a, b) - h * h * k * 0.25;
+}
+
+function buildWaterNormalTexture(): THREE.DataTexture {
+  const size = 256;
+  const data = new Uint8Array(size * size * 4);
+  const waves = [
+    { kx: 2, ky: 1, amp: 0.34, phase: 0.4 },
+    { kx: -1, ky: 3, amp: 0.28, phase: 1.7 },
+    { kx: 3, ky: -2, amp: 0.22, phase: 2.9 },
+    { kx: 5, ky: 2, amp: 0.14, phase: 0.8 },
+    { kx: -4, ky: 5, amp: 0.09, phase: 4.1 },
+    { kx: 7, ky: -3, amp: 0.06, phase: 2.2 },
+  ];
+  const strength = 0.24;
+
+  for (let y = 0; y < size; y++) {
+    const v = y / size;
+    for (let x = 0; x < size; x++) {
+      const u = x / size;
+      let dHdu = 0;
+      let dHdv = 0;
+      for (let w = 0; w < waves.length; w++) {
+        const wave = waves[w];
+        const theta = Math.PI * 2 * (wave.kx * u + wave.ky * v) + wave.phase;
+        const c = Math.cos(theta) * wave.amp;
+        dHdu += wave.kx * c;
+        dHdv += wave.ky * c;
+      }
+
+      let nx = -dHdu * strength;
+      let ny = -dHdv * strength;
+      let nz = 1.0;
+      const invLen = 1 / Math.hypot(nx, ny, nz);
+      nx *= invLen;
+      ny *= invLen;
+      nz *= invLen;
+
+      const idx = (y * size + x) * 4;
+      data[idx] = Math.round((nx * 0.5 + 0.5) * 255);
+      data[idx + 1] = Math.round((ny * 0.5 + 0.5) * 255);
+      data[idx + 2] = Math.round((nz * 0.5 + 0.5) * 255);
+      data[idx + 3] = 255;
+    }
+  }
+
+  const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.generateMipmaps = true;
+  tex.needsUpdate = true;
+  return tex;
+}
+
 export function evalRawMountainY(p: SceneryPatch, frac: number, ang: number, groundY: number): number {
   const u = 1 - frac;
   const ridge =
@@ -300,6 +359,40 @@ export function computeSceneryData(
       nearestIsTunnel,
       maxAllowedMountainY,
     };
+  };
+
+  const queryWaterRoadClearance = (px: number, pz: number): number => {
+    let minGroundRoadMargin = 999;
+    const cands = guardGrid.get(cellKey(Math.floor(px / CELL), Math.floor(pz / CELL)));
+    if (!cands || cands.length === 0) return minGroundRoadMargin;
+
+    for (let k = 0; k < cands.length; k++) {
+      const g = roadGuards[cands[k]];
+      const dx = g.bx - g.ax;
+      const dz = g.bz - g.az;
+      const l2 = dx * dx + dz * dz;
+      const t = l2 < 1e-6 ? 0 : Math.max(0, Math.min(1, ((px - g.ax) * dx + (pz - g.az) * dz) / l2));
+      const cx = g.ax + t * dx;
+      const cz = g.az + t * dz;
+      const dist = Math.hypot(px - cx, pz - cz);
+      let margin = dist - g.outerRadius;
+      const segY = g.ay + t * (g.by - g.ay);
+      const hAbove = segY - groundY;
+
+      // Elevated bridges/viaducts allow water underneath; ground roads carve water out
+      if (hAbove >= 2.8) continue;
+      if (hAbove > 2.0) {
+        const bridgeBlend = (hAbove - 2.0) / 0.8;
+        const smooth = bridgeBlend * bridgeBlend * (3 - 2 * bridgeBlend);
+        margin += smooth * 28;
+      }
+
+      if (margin < minGroundRoadMargin) {
+        minGroundRoadMargin = margin;
+      }
+    }
+
+    return minGroundRoadMargin;
   };
 
   const mountainMeshes: THREE.BufferGeometry[] = [];
@@ -492,6 +585,361 @@ export function computeSceneryData(
     return { y: maxH, onMountain };
   };
 
+  // 2.5 Build Unified Water Shore & Water Surface Meshes (Lakes, Rivers, Bays, Seas)
+  const waterPatches = patches.filter((p) => p.type === 'water');
+  interface WaterComponent {
+    patches: SceneryPatch[];
+    minX: number;
+    maxX: number;
+    minZ: number;
+    maxZ: number;
+  }
+  const waterComponents: WaterComponent[] = [];
+  if (waterPatches.length > 0) {
+    const visited = new Uint8Array(waterPatches.length);
+    for (let i = 0; i < waterPatches.length; i++) {
+      if (visited[i]) continue;
+      visited[i] = 1;
+      const queue = [i];
+      const compPatches: SceneryPatch[] = [];
+      let rawMinX = Infinity;
+      let rawMaxX = -Infinity;
+      let rawMinZ = Infinity;
+      let rawMaxZ = -Infinity;
+
+      for (let q = 0; q < queue.length; q++) {
+        const cur = waterPatches[queue[q]];
+        compPatches.push(cur);
+        if (cur.x - cur.radius < rawMinX) rawMinX = cur.x - cur.radius;
+        if (cur.x + cur.radius > rawMaxX) rawMaxX = cur.x + cur.radius;
+        if (cur.z - cur.radius < rawMinZ) rawMinZ = cur.z - cur.radius;
+        if (cur.z + cur.radius > rawMaxZ) rawMaxZ = cur.z + cur.radius;
+
+        for (let j = 0; j < waterPatches.length; j++) {
+          if (visited[j]) continue;
+          const other = waterPatches[j];
+          if (Math.hypot(cur.x - other.x, cur.z - other.z) <= cur.radius + other.radius + 32) {
+            visited[j] = 1;
+            queue.push(j);
+          }
+        }
+      }
+
+      const rawSpan = Math.max(rawMaxX - rawMinX, rawMaxZ - rawMinZ);
+      const pad = Math.max(24, Math.ceil(16 + (rawSpan / 110) * 1.15));
+      waterComponents.push({
+        patches: compPatches,
+        minX: rawMinX - pad,
+        maxX: rawMaxX + pad,
+        minZ: rawMinZ - pad,
+        maxZ: rawMaxZ + pad,
+      });
+    }
+  }
+
+  const evalWaterComponentRaw = (compPatches: SceneryPatch[], px: number, pz: number) => {
+    const coastNoise =
+      Math.sin(px * 0.029 + pz * 0.021) * 0.48 +
+      Math.cos(px * 0.016 - pz * 0.034) * 0.34 +
+      Math.sin((px - pz) * 0.051) * 0.18;
+
+    let waterSdf = Infinity;
+    let weightSum = 0;
+    let intSum = 0;
+
+    for (let i = 0; i < compPatches.length; i++) {
+      const wp = compPatches[i];
+      const effR = wp.radius + coastNoise * Math.min(14, wp.radius * 0.11);
+      const d = Math.hypot(px - wp.x, pz - wp.z) - effR;
+      waterSdf = i === 0 ? d : smin(waterSdf, d, 20);
+
+      const w = 1 / (Math.max(0, d) + 12);
+      weightSum += w;
+      intSum += (wp.intensity || 1.2) * w;
+    }
+
+    return {
+      waterSdf,
+      localIntensity: weightSum > 0 ? intSum / weightSum : 1.2,
+    };
+  };
+
+  const isPointSubmerged = (px: number, pz: number, surfaceY: number): boolean => {
+    if (waterComponents.length === 0 || surfaceY > groundY + 0.25) return false;
+    for (let c = 0; c < waterComponents.length; c++) {
+      const comp = waterComponents[c];
+      if (px < comp.minX || px > comp.maxX || pz < comp.minZ || pz > comp.maxZ) continue;
+      const { waterSdf } = evalWaterComponentRaw(comp.patches, px, pz);
+      const roadMargin = queryWaterRoadClearance(px, pz);
+      const effectiveSdf = Math.max(waterSdf, 4.5 - roadMargin);
+      if (effectiveSdf < 0.8) return true;
+    }
+    return false;
+  };
+
+  const shoreVerts: number[] = [];
+  const shoreColors: number[] = [];
+  const shoreIndices: number[] = [];
+
+  const waterVerts: number[] = [];
+  const waterNormals: number[] = [];
+  const waterUvs: number[] = [];
+  const waterColors: number[] = [];
+  const waterIndices: number[] = [];
+
+  if (waterComponents.length > 0) {
+    const cWetSandDeep = new THREE.Color('#7a6a4d');
+    const cWetSand = new THREE.Color('#c8ab75');
+    const cDrySand = new THREE.Color('#e6cfa0');
+    const cBankGrass = new THREE.Color('#7d9962');
+
+    const cFoam = new THREE.Color('#bae6fd');
+    const cShallowLagoon = new THREE.Color('#22d3ee');
+    const cShallowSea = new THREE.Color('#0ea5e9');
+    const cMidLagoon = new THREE.Color('#0284c7');
+    const cMidSea = new THREE.Color('#0369a1');
+    const cDeepLagoon = new THREE.Color('#0369a1');
+    const cDeepOcean = new THREE.Color('#082f49');
+
+    const tmpShallow = new THREE.Color();
+    const tmpMid = new THREE.Color();
+    const tmpDeep = new THREE.Color();
+    const tmpCol = new THREE.Color();
+
+    for (let c = 0; c < waterComponents.length; c++) {
+      const comp = waterComponents[c];
+      const spanX = comp.maxX - comp.minX;
+      const spanZ = comp.maxZ - comp.minZ;
+      const maxSpan = Math.max(spanX, spanZ);
+      const cellSize = Math.max(4.5, maxSpan / 110, spanX / 136, spanZ / 136);
+      const nx = Math.max(8, Math.ceil(spanX / cellSize));
+      const nz = Math.max(8, Math.ceil(spanZ / cellSize));
+      const stepX = spanX / nx;
+      const stepZ = spanZ / nz;
+      const stride = nx + 1;
+      const shoreOuter = Math.max(8.5, cellSize * 1.15);
+      const beachPeakD = -shoreOuter * 0.3;
+      const totalGridVerts = (nz + 1) * stride;
+
+      const depthArr = new Float32Array(totalGridVerts);
+      const roadMarginArr = new Float32Array(totalGridVerts);
+      const intensityArr = new Float32Array(totalGridVerts);
+      const terrainYArr = new Float32Array(totalGridVerts);
+      const onMountainArr = new Uint8Array(totalGridVerts);
+
+      for (let iz = 0; iz <= nz; iz++) {
+        const vz = comp.minZ + iz * stepZ;
+        for (let ix = 0; ix <= nx; ix++) {
+          const vx = comp.minX + ix * stepX;
+          const vIdx = iz * stride + ix;
+          const { waterSdf, localIntensity } = evalWaterComponentRaw(comp.patches, vx, vz);
+          if (waterSdf > shoreOuter + cellSize * 1.5) {
+            depthArr[vIdx] = -999;
+            roadMarginArr[vIdx] = 999;
+            intensityArr[vIdx] = localIntensity;
+            terrainYArr[vIdx] = groundY;
+            continue;
+          }
+          const roadMargin = queryWaterRoadClearance(vx, vz);
+          const effectiveSdf = Math.max(waterSdf, 4.5 - roadMargin);
+          depthArr[vIdx] = -effectiveSdf;
+          roadMarginArr[vIdx] = roadMargin;
+          intensityArr[vIdx] = localIntensity;
+          const surf = getTerrainSurfaceAt(vx, vz);
+          terrainYArr[vIdx] = surf.y;
+          onMountainArr[vIdx] = surf.onMountain ? 1 : 0;
+        }
+      }
+
+      const shoreVMap = new Int32Array(totalGridVerts).fill(-1);
+      const waterVMap = new Int32Array(totalGridVerts).fill(-1);
+
+      const ensureShoreVertex = (vIdx: number): number => {
+        const existing = shoreVMap[vIdx];
+        if (existing !== -1) return existing;
+
+        const ix = vIdx % stride;
+        const iz = Math.floor(vIdx / stride);
+        const vx = comp.minX + ix * stepX;
+        const vz = comp.minZ + iz * stepZ;
+        const depth = depthArr[vIdx];
+        const roadMargin = roadMarginArr[vIdx];
+
+        let shoreVy: number;
+        if (depth >= 6.0) {
+          shoreVy = groundY - 0.18;
+        } else if (depth >= 0) {
+          const t = depth / 6.0;
+          shoreVy = groundY + 0.06 + (-0.18 - 0.06) * t;
+        } else if (depth >= beachPeakD) {
+          const t = depth / beachPeakD; // 0 at depth=0 -> 1 at beachPeakD
+          shoreVy = groundY + 0.06 + (0.12 - 0.06) * t;
+        } else {
+          const t = Math.min(1, Math.max(0, (beachPeakD - depth) / (shoreOuter + beachPeakD)));
+          shoreVy = groundY + 0.12 + (-0.24 - 0.12) * t;
+        }
+
+        if (roadMargin < 2.5) {
+          const roadFade = Math.max(0, Math.min(1, (roadMargin - 0.7) / 1.8));
+          shoreVy = groundY - 0.25 + (shoreVy - (groundY - 0.25)) * roadFade;
+        }
+
+        if (depth >= 2.0) {
+          const t = Math.min(1, (depth - 2.0) / 4.5);
+          tmpCol.lerpColors(cWetSand, cWetSandDeep, t);
+        } else if (depth >= -1.0) {
+          const t = Math.min(1, Math.max(0, (depth + 1.0) / 3.0));
+          tmpCol.lerpColors(cDrySand, cWetSand, t);
+        } else if (depth >= beachPeakD) {
+          tmpCol.copy(cDrySand);
+        } else {
+          const t = Math.min(1, Math.max(0, (beachPeakD - depth) / Math.max(0.5, shoreOuter + beachPeakD)));
+          tmpCol.lerpColors(cDrySand, cBankGrass, t);
+        }
+
+        const outIdx = shoreVerts.length / 3;
+        shoreVerts.push(vx, shoreVy, vz);
+        shoreColors.push(tmpCol.r, tmpCol.g, tmpCol.b);
+        shoreVMap[vIdx] = outIdx;
+        return outIdx;
+      };
+
+      const ensureWaterVertex = (vIdx: number): number => {
+        const existing = waterVMap[vIdx];
+        if (existing !== -1) return existing;
+
+        const ix = vIdx % stride;
+        const iz = Math.floor(vIdx / stride);
+        const vx = comp.minX + ix * stepX;
+        const vz = comp.minZ + iz * stepZ;
+        const depth = depthArr[vIdx];
+
+        const waterVy =
+          depth >= 0
+            ? groundY + 0.09
+            : groundY + 0.09 + Math.max(-0.55, depth * (0.46 / shoreOuter));
+
+        let colorDepth = Math.max(0, depth);
+        const terrainY = terrainYArr[vIdx];
+        if (onMountainArr[vIdx] === 1 && terrainY > groundY - 0.12) {
+          const islandClearance = Math.max(0, terrainY - (groundY + 0.09));
+          const islandShallow = Math.max(0, 1 - islandClearance / 1.2);
+          if (islandShallow > 0) {
+            colorDepth = colorDepth * (1 - islandShallow) + 1.2 * islandShallow;
+          }
+        }
+
+        const oceanFactor = Math.max(0, Math.min(1, (intensityArr[vIdx] - 0.5) / 2.0));
+        tmpShallow.lerpColors(cShallowLagoon, cShallowSea, oceanFactor);
+        tmpMid.lerpColors(cMidLagoon, cMidSea, oceanFactor);
+        tmpDeep.lerpColors(cDeepLagoon, cDeepOcean, oceanFactor);
+
+        if (colorDepth < 2.2) {
+          tmpCol.lerpColors(cFoam, tmpShallow, Math.max(0, colorDepth) / 2.2);
+        } else if (colorDepth < 16.0) {
+          tmpCol.lerpColors(tmpShallow, tmpMid, (colorDepth - 2.2) / 13.8);
+        } else {
+          tmpCol.lerpColors(tmpMid, tmpDeep, Math.min(1, (colorDepth - 16.0) / 32.0));
+        }
+
+        const outIdx = waterVerts.length / 3;
+        waterVerts.push(vx, waterVy, vz);
+        waterNormals.push(0, 1, 0);
+        waterUvs.push(vx / 34, vz / 34);
+        waterColors.push(tmpCol.r, tmpCol.g, tmpCol.b);
+        waterVMap[vIdx] = outIdx;
+        return outIdx;
+      };
+
+      const triTouchesGroundRoad = (a: number, b: number, cIdx: number, marginThresh: number): boolean => {
+        if (
+          roadMarginArr[a] < marginThresh ||
+          roadMarginArr[b] < marginThresh ||
+          roadMarginArr[cIdx] < marginThresh
+        ) {
+          return true;
+        }
+        if (
+          roadMarginArr[a] > marginThresh + cellSize * 1.6 &&
+          roadMarginArr[b] > marginThresh + cellSize * 1.6 &&
+          roadMarginArr[cIdx] > marginThresh + cellSize * 1.6
+        ) {
+          return false;
+        }
+        const ax = comp.minX + (a % stride) * stepX;
+        const az = comp.minZ + Math.floor(a / stride) * stepZ;
+        const bx = comp.minX + (b % stride) * stepX;
+        const bz = comp.minZ + Math.floor(b / stride) * stepZ;
+        const cx = comp.minX + (cIdx % stride) * stepX;
+        const cz = comp.minZ + Math.floor(cIdx / stride) * stepZ;
+
+        if (queryWaterRoadClearance((ax + bx + cx) / 3, (az + bz + cz) / 3) < marginThresh) return true;
+        if (queryWaterRoadClearance((ax + bx) * 0.5, (az + bz) * 0.5) < marginThresh) return true;
+        if (queryWaterRoadClearance((bx + cx) * 0.5, (bz + cz) * 0.5) < marginThresh) return true;
+        if (queryWaterRoadClearance((cx + ax) * 0.5, (cz + az) * 0.5) < marginThresh) return true;
+        return false;
+      };
+
+      const emitTri = (a: number, b: number, cIdx: number) => {
+        const da = depthArr[a];
+        const db = depthArr[b];
+        const dc = depthArr[cIdx];
+
+        if (
+          (da > -0.25 || db > -0.25 || dc > -0.25) &&
+          da > -shoreOuter * 1.15 &&
+          db > -shoreOuter * 1.15 &&
+          dc > -shoreOuter * 1.15 &&
+          !triTouchesGroundRoad(a, b, cIdx, 1.0)
+        ) {
+          waterIndices.push(ensureWaterVertex(a), ensureWaterVertex(b), ensureWaterVertex(cIdx));
+        }
+
+        if (
+          ((da > -shoreOuter * 0.98 && da < 7.0) ||
+            (db > -shoreOuter * 0.98 && db < 7.0) ||
+            (dc > -shoreOuter * 0.98 && dc < 7.0)) &&
+          da > -shoreOuter * 1.45 &&
+          db > -shoreOuter * 1.45 &&
+          dc > -shoreOuter * 1.45 &&
+          !triTouchesGroundRoad(a, b, cIdx, 0.5)
+        ) {
+          shoreIndices.push(ensureShoreVertex(a), ensureShoreVertex(b), ensureShoreVertex(cIdx));
+        }
+      };
+
+      for (let iz = 0; iz < nz; iz++) {
+        for (let ix = 0; ix < nx; ix++) {
+          const v00 = iz * stride + ix;
+          const v10 = v00 + 1;
+          const v01 = v00 + stride;
+          const v11 = v01 + 1;
+          emitTri(v00, v01, v10);
+          emitTri(v10, v01, v11);
+        }
+      }
+    }
+  }
+
+  let waterShoreGeo: THREE.BufferGeometry | null = null;
+  if (shoreIndices.length > 0) {
+    waterShoreGeo = new THREE.BufferGeometry();
+    waterShoreGeo.setAttribute('position', new THREE.Float32BufferAttribute(shoreVerts, 3));
+    waterShoreGeo.setAttribute('color', new THREE.Float32BufferAttribute(shoreColors, 3));
+    waterShoreGeo.setIndex(shoreIndices);
+    waterShoreGeo.computeVertexNormals();
+  }
+
+  let waterSurfaceGeo: THREE.BufferGeometry | null = null;
+  if (waterIndices.length > 0) {
+    waterSurfaceGeo = new THREE.BufferGeometry();
+    waterSurfaceGeo.setAttribute('position', new THREE.Float32BufferAttribute(waterVerts, 3));
+    waterSurfaceGeo.setAttribute('normal', new THREE.Float32BufferAttribute(waterNormals, 3));
+    waterSurfaceGeo.setAttribute('uv', new THREE.Float32BufferAttribute(waterUvs, 2));
+    waterSurfaceGeo.setAttribute('color', new THREE.Float32BufferAttribute(waterColors, 3));
+    waterSurfaceGeo.setIndex(waterIndices);
+  }
+
   // 3. Place Forests, Cities, Grandstands, and Desert Props on top of the exact terrain surface
   const treeOccupied = new Set<number>();
 
@@ -514,6 +962,7 @@ export function computeSceneryData(
         const { minMargin, nearestRoadY, nearestIsTunnel } = queryRoadClearance(tx, tz);
         const { y: ty, onMountain } = getTerrainSurfaceAt(tx, tz);
         if (minMargin < 5.0 && !(nearestIsTunnel && onMountain && ty >= nearestRoadY + 10.5)) continue; // Strictly outside track walls (except mountain roofs above tunnels)!
+        if (isPointSubmerged(tx, tz, ty)) continue;
 
         treeOccupied.add(occKey);
         const scale = (0.75 + rand() * 0.75) * Math.min(1.6, 0.7 + intensity * 0.35);
@@ -542,6 +991,7 @@ export function computeSceneryData(
         const bh = (12 + rand() * 34) * intensity;
         const { minMargin, nearestAngle } = queryRoadClearance(bx, bz, true);
         if (minMargin < Math.hypot(bw, bd) * 0.55 + 4.5) continue;
+        if (isPointSubmerged(bx, bz, groundY)) continue;
         if (buildings.some((other) => Math.hypot(other.x - bx, other.z - bz) < (other.w + bw) * 0.55)) {
           continue;
         }
@@ -682,6 +1132,7 @@ export function computeSceneryData(
         const { minMargin } = queryRoadClearance(rx, rz);
         if (minMargin < 6.5) continue;
         const { y: ry, onMountain } = getTerrainSurfaceAt(rx, rz);
+        if (isPointSubmerged(rx, rz, ry)) continue;
         const isCactus = rand() > 0.42;
         desertRocks.push({
           x: rx,
@@ -871,6 +1322,8 @@ export function computeSceneryData(
   return {
     mountainMeshes,
     terrainGrids,
+    waterSurfaceGeo,
+    waterShoreGeo,
     pineTrees,
     leafTrees,
     grandstands,
@@ -901,7 +1354,7 @@ export const Scenery3D: React.FC<Scenery3DProps> = React.memo(({
     [spline, isClosed, branches, pitSpline]
   );
 
-  // 2. Build Mountain & Desert Dune meshes + Prop placements + Instanced tree lists
+  // 2. Build Mountain & Desert Dune meshes + Water + Prop placements + Instanced tree lists
   const builtScenery = useMemo(
     () => computeSceneryData(patches, roadGuards, groundY),
     [patches, roadGuards, groundY]
@@ -910,6 +1363,8 @@ export const Scenery3D: React.FC<Scenery3DProps> = React.memo(({
   useEffect(() => {
     return () => {
       builtScenery.mountainMeshes.forEach((g) => g.dispose());
+      builtScenery.waterSurfaceGeo?.dispose();
+      builtScenery.waterShoreGeo?.dispose();
       builtScenery.buildingsGeo?.dispose();
       builtScenery.buildingAccentsGeo?.dispose();
       builtScenery.grandstandsGeo?.dispose();
@@ -918,6 +1373,34 @@ export const Scenery3D: React.FC<Scenery3DProps> = React.memo(({
       builtScenery.rocksGeo?.dispose();
     };
   }, [builtScenery]);
+
+  const waterNormalTex = useMemo(() => buildWaterNormalTexture(), []);
+  const waterNormalScale = useMemo(() => new THREE.Vector2(0.55, 0.55), []);
+  useEffect(() => {
+    return () => {
+      waterNormalTex.dispose();
+    };
+  }, [waterNormalTex]);
+
+  const waterGroupRef = useRef<THREE.Group>(null);
+  const waterMatRef = useRef<THREE.MeshStandardMaterial>(null);
+
+  useFrame((state, delta) => {
+    if (!builtScenery.waterSurfaceGeo) return;
+    const dt = Math.min(delta, 0.05);
+    waterNormalTex.offset.x = (waterNormalTex.offset.x + dt * 0.032) % 1;
+    waterNormalTex.offset.y = (waterNormalTex.offset.y + dt * 0.021) % 1;
+    const t = state.clock.elapsedTime;
+    if (waterMatRef.current) {
+      waterMatRef.current.normalScale.set(
+        0.55 + Math.sin(t * 1.1) * 0.1,
+        0.55 + Math.cos(t * 0.9) * 0.1
+      );
+    }
+    if (waterGroupRef.current) {
+      waterGroupRef.current.position.y = Math.sin(t * 1.35) * 0.015;
+    }
+  });
 
   // Shared unit geometries for InstancedMesh trees (disposed on unmount)
   const treeBaseGeos = useMemo(() => {
@@ -1007,6 +1490,8 @@ export const Scenery3D: React.FC<Scenery3DProps> = React.memo(({
       ? '#06b6d4'
       : activeSpray === 'desert'
       ? '#f59e0b'
+      : activeSpray === 'water'
+      ? '#0ea5e9'
       : '#ef4444';
 
   return (
@@ -1017,6 +1502,30 @@ export const Scenery3D: React.FC<Scenery3DProps> = React.memo(({
           <meshStandardMaterial vertexColors roughness={0.92} metalness={0.04} side={THREE.DoubleSide} />
         </mesh>
       ))}
+
+      {/* 1.5. 3D Water Shorelines & Animated Water Surface (Lakes, Rivers, Bays, Seas) */}
+      {builtScenery.waterShoreGeo && (
+        <mesh geometry={builtScenery.waterShoreGeo} receiveShadow>
+          <meshStandardMaterial vertexColors roughness={0.93} metalness={0.02} />
+        </mesh>
+      )}
+      {builtScenery.waterSurfaceGeo && (
+        <group ref={waterGroupRef}>
+          <mesh geometry={builtScenery.waterSurfaceGeo} receiveShadow renderOrder={1}>
+            <meshStandardMaterial
+              ref={waterMatRef}
+              vertexColors
+              roughness={0.14}
+              metalness={0.22}
+              normalMap={waterNormalTex}
+              normalScale={waterNormalScale}
+              transparent
+              opacity={0.9}
+              depthWrite
+            />
+          </mesh>
+        </group>
+      )}
 
       {/* 2. 3D Forests (GPU InstancedMesh - minimal RAM/VRAM and 3 draw calls total) */}
       {totalTreesCount > 0 && (
@@ -1089,11 +1598,11 @@ export const Scenery3D: React.FC<Scenery3DProps> = React.memo(({
       {/* 6. Live Spray Can 3D Brush Ring on Ground */}
       {activeSpray && cursorPos && (
         <group position={[cursorPos[0], groundY + 0.45, cursorPos[1]]}>
-          <mesh rotation={[-Math.PI / 2, 0, 0]}>
+          <mesh rotation={[-Math.PI / 2, 0, 0]} renderOrder={5}>
             <ringGeometry args={[Math.max(2, sprayRadius - 2.2), sprayRadius, 48]} />
             <meshBasicMaterial color={cursorColor} transparent opacity={0.85} side={THREE.DoubleSide} />
           </mesh>
-          <mesh rotation={[-Math.PI / 2, 0, 0]}>
+          <mesh rotation={[-Math.PI / 2, 0, 0]} renderOrder={5}>
             <circleGeometry args={[sprayRadius, 48]} />
             <meshBasicMaterial color={cursorColor} transparent opacity={0.16} side={THREE.DoubleSide} />
           </mesh>

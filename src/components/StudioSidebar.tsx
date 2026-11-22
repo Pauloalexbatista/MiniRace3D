@@ -2228,6 +2228,7 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
                   { id: 'grandstand', label: '🎡 Bancadas GP', sub: 'Público virado para a pista', color: '#f43f5e' },
                   { id: 'pitbox', label: '🏁 Garagens Box', sub: '3 boxes coladas em fila viradas para a pista', color: '#06b6d4' },
                   { id: 'desert', label: '🏜️ Deserto & Rocha', sub: 'Dunas, rochedos e catos', color: '#f59e0b' },
+                  { id: 'water', label: '🌊 Água (Lago/Mar)', sub: 'Lagos, rios e mar (passa sob pontes)', color: '#0ea5e9' },
                   { id: 'eraser', label: '🧽 Borracha Spray', sub: 'Apagar manchas no mapa', color: '#ef4444' },
                 ] as { id: SprayCanType; label: string; sub: string; color: string }[]).map((can) => {
                   const active = props.activeSpray === can.id;
@@ -2258,6 +2259,10 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
             </div>
 
             {/* AFINAÇÃO DA LATA DE SPRAY */}
+            {(() => {
+              const maxSprayRadius = props.activeSpray === 'water' || props.activeSpray === 'eraser' ? 360 : 180;
+              const displayRadius = Math.min(props.sprayRadius ?? 75, maxSprayRadius);
+              return (
             <div style={{ background: 'rgba(30, 41, 59, 0.5)', padding: 12, borderRadius: 10, border: '1px solid rgba(255,255,255,0.08)', display: 'flex', flexDirection: 'column', gap: 10 }}>
               <span style={{ fontSize: 11, fontWeight: 800, color: '#f59e0b', textTransform: 'uppercase' }}>
                 🎛️ Ajuste do Jato de Spray
@@ -2266,14 +2271,14 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#cbd5e1', marginBottom: 3 }}>
                   <span>Raio da Mancha</span>
-                  <b style={{ color: '#38bdf8' }}>{props.sprayRadius ?? 75} m</b>
+                  <b style={{ color: '#38bdf8' }}>{displayRadius} m</b>
                 </div>
                 <input
                   type="range"
                   min={25}
-                  max={180}
+                  max={maxSprayRadius}
                   step={5}
-                  value={props.sprayRadius ?? 75}
+                  value={displayRadius}
                   onChange={(e) => props.onChangeSprayRadius?.(Number(e.target.value))}
                   style={{ width: '100%', accentColor: '#38bdf8' }}
                 />
@@ -2281,7 +2286,7 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
 
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#cbd5e1', marginBottom: 3 }}>
-                  <span>Altura / Densidade</span>
+                  <span>{props.activeSpray === 'water' ? 'Profundidade / Tom (Lago ↔ Mar)' : 'Altura / Densidade'}</span>
                   <b style={{ color: '#10b981' }}>{(props.sprayIntensity ?? 1.2).toFixed(1)}x</b>
                 </div>
                 <input
@@ -2295,6 +2300,8 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
                 />
               </div>
             </div>
+              );
+            })()}
 
             {/* GESTÃO DAS MANCHAS PINTADAS + GRAVAR */}
             <div style={{ background: 'rgba(30, 41, 59, 0.5)', padding: 12, borderRadius: 10, border: '1px solid rgba(255,255,255,0.08)', display: 'flex', flexDirection: 'column', gap: 8 }}>
