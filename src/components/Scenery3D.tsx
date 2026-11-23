@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { SplineNode, RoadBranch, SceneryPatch, SprayCanType, computeSpline } from '../tracks';
 import { getZone } from '../trackCorridor';
+import { TUNNEL_ARCH_HEIGHT, TUNNEL_MOUNTAIN_CLEARANCE } from '../tunnelCamera';
 
 function appendTransformedGeo(
   src: THREE.BufferGeometry,
@@ -323,7 +324,7 @@ export function computeSceneryData(
       }
 
       if (margin < 24.5) {
-        if (g.isTunnel && sampleRawY !== undefined && sampleRawY >= segY + 10.5) {
+        if (g.isTunnel && sampleRawY !== undefined && sampleRawY >= segY + TUNNEL_MOUNTAIN_CLEARANCE) {
           return;
         }
         const blend = Math.max(0, Math.min(1, (margin - 4.5) / 20.0));
@@ -497,7 +498,7 @@ export function computeSceneryData(
         const { minMargin, nearestRoadY, nearestIsTunnel, maxAllowedMountainY } = queryRoadClearance(sx, sz, false, sy);
         if (minMargin < 1.0) {
           if (nearestIsTunnel) {
-            if (sy > nearestRoadY - 0.8 && sy < nearestRoadY + 10.2) {
+            if (sy > nearestRoadY - 0.8 && sy < nearestRoadY + TUNNEL_ARCH_HEIGHT + 0.4) {
               return true;
             }
           } else if (nearestRoadY <= groundY + 2.2) {
@@ -961,7 +962,7 @@ export function computeSceneryData(
 
         const { minMargin, nearestRoadY, nearestIsTunnel } = queryRoadClearance(tx, tz);
         const { y: ty, onMountain } = getTerrainSurfaceAt(tx, tz);
-        if (minMargin < 5.0 && !(nearestIsTunnel && onMountain && ty >= nearestRoadY + 10.5)) continue; // Strictly outside track walls (except mountain roofs above tunnels)!
+        if (minMargin < 5.0 && !(nearestIsTunnel && onMountain && ty >= nearestRoadY + TUNNEL_MOUNTAIN_CLEARANCE)) continue; // Strictly outside track walls (except mountain roofs above tunnels)!
         if (isPointSubmerged(tx, tz, ty)) continue;
 
         treeOccupied.add(occKey);

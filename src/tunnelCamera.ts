@@ -2,9 +2,18 @@ import * as THREE from 'three';
 import { SplineNode, RoadBranch, computeSpline } from './tracks';
 import { computeCorridor, bermaWidth, getZone } from './trackCorridor';
 
-export const TUNNEL_BACK = 6.5;
-export const TUNNEL_HEIGHT = 2.65;
+export const OUTDOOR_CHASE_BACK = 13.0;
+export const OUTDOOR_CHASE_HEIGHT = 5.2;
+export const TUNNEL_BACK = OUTDOOR_CHASE_BACK;
+export const TUNNEL_HEIGHT = OUTDOOR_CHASE_HEIGHT;
 export const TUNNEL_APPROACH_DIST = 26;
+
+export const TUNNEL_WALL_HEIGHT = 11.5;
+export const TUNNEL_ARCH_HEIGHT = 14.0;
+export const TUNNEL_LIGHT_STRIP_HEIGHT = 13.65;
+export const TUNNEL_POINT_LIGHT_HEIGHT = 12.6;
+export const TUNNEL_PORTAL_THICKNESS = 1.1;
+export const TUNNEL_MOUNTAIN_CLEARANCE = 14.8;
 
 export interface TunnelFrame {
   px: number;
@@ -53,7 +62,7 @@ export function tunnelArchCeilingHeight(lat: number, wL: number, wR: number): nu
     lat >= 0
       ? Math.min(1, lat / Math.max(1, wL * 0.92))
       : Math.min(1, (-lat) / Math.max(1, wR * 0.92));
-  return 9.8 - 2.0 * frac;
+  return TUNNEL_ARCH_HEIGHT - (TUNNEL_ARCH_HEIGHT - TUNNEL_WALL_HEIGHT) * frac;
 }
 
 function makeEmptyFrame(): TunnelFrame {
@@ -484,7 +493,7 @@ export function detectCarTunnelState(
       if (lat < -(scratchFrame.wR + 1.5) || lat > scratchFrame.wL + 1.5) continue;
 
       const relUp = rx * scratchFrame.ux + ry * scratchFrame.uy + rz * scratchFrame.uz;
-      if (relUp < -1.8 || relUp > 10.5) continue;
+      if (relUp < -1.8 || relUp > TUNNEL_ARCH_HEIGHT + 0.7) continue;
 
       const score = lat * lat + relUp * relUp;
       if (score < bestInsideScore) {
@@ -523,7 +532,7 @@ export function detectCarTunnelState(
     if (along0 >= -TUNNEL_APPROACH_DIST && along0 < -0.2 && heading0 > 0.35) {
       const lat0 = r0x * f0.sx + r0y * f0.sy + r0z * f0.sz;
       const up0 = r0x * f0.ux + r0y * f0.uy + r0z * f0.uz;
-      if (lat0 >= -(f0.wR + 6) && lat0 <= f0.wL + 6 && up0 >= -2.0 && up0 <= 10.0) {
+      if (lat0 >= -(f0.wR + 6) && lat0 <= f0.wL + 6 && up0 >= -2.0 && up0 <= TUNNEL_ARCH_HEIGHT) {
         const blend = smoothstep01(1 - -along0 / TUNNEL_APPROACH_DIST);
         if (!bestApproach || blend > bestApproach.blend) {
           bestApproach = {
@@ -549,7 +558,7 @@ export function detectCarTunnelState(
     if (alongEnd > 0.2 && alongEnd <= TUNNEL_APPROACH_DIST && headingEnd < -0.35) {
       const latEnd = rex * fEnd.sx + rey * fEnd.sy + rez * fEnd.sz;
       const upEnd = rex * fEnd.ux + rey * fEnd.uy + rez * fEnd.uz;
-      if (latEnd >= -(fEnd.wR + 6) && latEnd <= fEnd.wL + 6 && upEnd >= -2.0 && upEnd <= 10.0) {
+      if (latEnd >= -(fEnd.wR + 6) && latEnd <= fEnd.wL + 6 && upEnd >= -2.0 && upEnd <= TUNNEL_ARCH_HEIGHT) {
         const blend = smoothstep01(1 - alongEnd / TUNNEL_APPROACH_DIST);
         if (!bestApproach || blend > bestApproach.blend) {
           bestApproach = {
@@ -579,7 +588,7 @@ export function computeTunnelChaseDesired(
   tunnelBlend: number,
   outDesired: THREE.Vector3
 ): THREE.Vector3 {
-  scratchOutdoorOffset.set(0, 5.2, -13.0).applyQuaternion(carQuat);
+  scratchOutdoorOffset.set(0, OUTDOOR_CHASE_HEIGHT, -OUTDOOR_CHASE_BACK).applyQuaternion(carQuat);
   scratchOutdoorPos.copy(carPos).add(scratchOutdoorOffset);
 
   const sCam = carTunnel.sCar - carTunnel.dirSign * TUNNEL_BACK;
@@ -587,9 +596,10 @@ export function computeTunnelChaseDesired(
 
   const maxL = f.wL > 1.8 ? f.wL - 1.5 : f.wL * 0.55;
   const maxR = f.wR > 1.8 ? f.wR - 1.5 : f.wR * 0.55;
-  const camLat = Math.max(-maxR, Math.min(maxL, carTunnel.carLat * 0.65));
-  const maxH = Math.max(1.5, tunnelArchCeilingHeight(camLat, f.wL, f.wR) - 1.85);
-  const camH = Math.min(TUNNEL_HEIGHT, maxH);
+  const camLat = Math.max(-maxR, Math.min(maxL, carTunnel.carLat));
+  const maxH = Math.max(2.0, tunnelArchCeilingHeight(camLat, f.wL, f.wR) - 2.0);
+  const carRideH = Math.max(0, Math.min(1.5, carTunnel.carRelUp));
+  const camH = Math.min(carRideH + TUNNEL_HEIGHT, maxH);
 
   scratchTunnelPos.set(
     f.px + f.sx * camLat + f.ux * camH,
@@ -597,11 +607,16 @@ export function computeTunnelChaseDesired(
     f.pz + f.sz * camLat + f.uz * camH
   );
 
-  if (carTunnel.status === 'inside') {
-    outDesired.copy(scratchTunnelPos);
-  } else {
-    outDesired.copy(scratchOutdoorPos).lerp(scratchTunnelPos, Math.max(0, Math.min(1, tunnelBlend)));
+  let camPortalBlend = 1;
+  if (!carTunnel.run.isFullLoop) {
+    if (sCam < 0) {
+      camPortalBlend = smoothstep01((sCam + 8) / 8);
+    } else if (sCam > carTunnel.run.totalLen) {
+      camPortalBlend = smoothstep01((carTunnel.run.totalLen + 8 - sCam) / 8);
+    }
   }
+  const effectiveBlend = Math.max(0, Math.min(1, tunnelBlend)) * camPortalBlend;
+  outDesired.copy(scratchOutdoorPos).lerp(scratchTunnelPos, effectiveBlend);
   return outDesired;
 }
 
@@ -690,7 +705,6 @@ export function clampCameraInsideTunnels(
 
     if (!run.isFullLoop) {
       let sProj = scratchClampFrame.s;
-      let pulled = false;
 
       if (bestK === 0 && bestT === 0) {
         const f0 = frames[0];
@@ -704,24 +718,12 @@ export function clampCameraInsideTunnels(
         if (alongEnd > 0) sProj = run.totalLen + alongEnd;
       }
 
-      if (carTunnel.dirSign === 1) {
-        const minS = Math.min(0, carTunnel.sCar - (TUNNEL_BACK + 1.0));
-        if (sProj < minS) {
-          sProj = minS;
-          pulled = true;
-        }
-      } else {
-        const maxS = Math.max(run.totalLen, carTunnel.sCar + (TUNNEL_BACK + 1.0));
-        if (sProj > maxS) {
-          sProj = maxS;
-          pulled = true;
-        }
+      if (sProj < -1.2 || sProj > run.totalLen + 1.2) {
+        return false;
       }
-
-      if (pulled || sProj < 0 || sProj > run.totalLen) {
+      if (sProj < 0 || sProj > run.totalLen) {
         sampleTunnelRunAt(run, sProj, scratchClampFrame);
-        if (clampPointToFrame(camPos, scratchClampFrame, false)) clamped = true;
-        return clamped || pulled;
+        return clampPointToFrame(camPos, scratchClampFrame, false);
       }
     }
 
@@ -766,7 +768,7 @@ export function clampCameraInsideTunnels(
       const maxReach = Math.max(fA.wL, fA.wR, fB.wL, fB.wR) + 12;
       const horizSq = (camPos.x - px) ** 2 + (camPos.z - pz) ** 2;
       if (horizSq >= maxReach * maxReach) continue;
-      if (camPos.y - py > 14.0) continue;
+      if (camPos.y - py > TUNNEL_ARCH_HEIGHT + 4.0) continue;
 
       const dSq = horizSq + (camPos.y - py) ** 2;
       if (dSq < bestDistSq) {

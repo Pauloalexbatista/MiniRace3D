@@ -7,6 +7,22 @@ import { SurfaceType } from '../physics';
 import { buildBranchGeometries } from '../branchRoads';
 import { buildUnifiedRoadNetwork } from '../roadFusion';
 import { subscribeTelemetry, getTelemetry } from '../telemetryStore';
+import {
+  buildTrackPropsData,
+  makeAsphaltGrainTexture,
+  makeCurbStripeTexture,
+  makeWallPanelTexture,
+  makeBrakingBoardTexture,
+  makeChevronBoardTexture,
+  makeGantryBannerTexture,
+} from '../trackProps';
+import {
+  TUNNEL_WALL_HEIGHT,
+  TUNNEL_ARCH_HEIGHT,
+  TUNNEL_LIGHT_STRIP_HEIGHT,
+  TUNNEL_POINT_LIGHT_HEIGHT,
+  TUNNEL_PORTAL_THICKNESS,
+} from '../tunnelCamera';
 
 const getStartLightsKey = () => {
   const t = getTelemetry();
@@ -397,16 +413,20 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
     const bridgeWallLIndices: number[] = [];
     const bridgeWallRIndices: number[] = [];
 
+    const roadUvs: number[] = [];
+
     const whiteLineVerts: number[] = [];
     const whiteLineColors: number[] = [];
     const whiteLineIndices: number[] = [];
 
     const yellowCurbsVerts: number[] = [];
     const yellowCurbsColors: number[] = [];
+    const yellowCurbsUvs: number[] = [];
     const yellowCurbsIndices: number[] = [];
 
     const redCurbsVerts: number[] = [];
     const redCurbsColors: number[] = [];
+    const redCurbsUvs: number[] = [];
     const redCurbsIndices: number[] = [];
 
     const grassShoulderVerts: number[] = [];
@@ -426,9 +446,11 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
 
     const guardrailLeftVerts: number[] = [];
     const guardrailLeftColors: number[] = [];
+    const guardrailLeftUvs: number[] = [];
     const guardrailLeftIndices: number[] = [];
     const guardrailRightVerts: number[] = [];
     const guardrailRightColors: number[] = [];
+    const guardrailRightUvs: number[] = [];
     const guardrailRightIndices: number[] = [];
 
     const edgeLines: number[] = [];
@@ -722,6 +744,14 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
     );
     const isBridgeOverpass = rawOverpassMask;
 
+    const cumDist = new Float64Array(N);
+    for (let i = 1; i < N; i++) {
+      cumDist[i] = cumDist[i - 1] + frames[i].pos.distanceTo(frames[i - 1].pos);
+    }
+    const totalTrackLen = cumDist[N - 1] + (isClosed && N >= 2 ? frames[N - 1].pos.distanceTo(frames[0].pos) : 0);
+    const curbTiles = Math.max(1, Math.round(totalTrackLen / 4.0));
+    const wallTiles = Math.max(1, Math.round(totalTrackLen / 6.0));
+
     // Gera??o dos v?rtices de cada uma das 15 zonas
     for (let i = 0; i < N; i++) {
       const f = frames[i];
@@ -774,6 +804,7 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
 
       roadVerts.push(pBermStartL.x, pBermStartL.y, pBermStartL.z);
       roadVerts.push(pBermStartR.x, pBermStartR.y, pBermStartR.z);
+      roadUvs.push(pBermStartL.x / 10, pBermStartL.z / 10, pBermStartR.x / 10, pBermStartR.z / 10);
       const currNode = spline[i];
       const defaultWhiteLineColor = themeConfig.whiteLineColor || '#ffffff';
       const defaultSandColor = themeConfig.sandColor || '#d97706';
@@ -835,6 +866,9 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
       whiteLineVerts.push(pBermStartR.x, pBermStartR.y, pBermStartR.z);
       whiteLineVerts.push(pWhiteR.x, pWhiteR.y, pWhiteR.z);
 
+      const vCurb = totalTrackLen > 1e-4 ? (cumDist[i] / totalTrackLen) * curbTiles : 0;
+      const uWall = totalTrackLen > 1e-4 ? (cumDist[i] / totalTrackLen) * wallTiles : 0;
+
       // 3. Berma (faixa 1)
       const pYellowL = pBermStartL.clone().lerp(pWallBaseInnerL, fYellowL).add(f.up.clone().multiplyScalar(0.014));
       const pYellowR = pBermStartR.clone().lerp(pWallBaseInnerR, fYellowR).add(f.up.clone().multiplyScalar(0.014));
@@ -842,6 +876,7 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
       yellowCurbsVerts.push(pYellowL.x, pYellowL.y, pYellowL.z);
       yellowCurbsVerts.push(pWhiteR.x, pWhiteR.y, pWhiteR.z);
       yellowCurbsVerts.push(pYellowR.x, pYellowR.y, pYellowR.z);
+      yellowCurbsUvs.push(0, vCurb, 1, vCurb, 0, vCurb, 1, vCurb);
 
       // 4. Berma (faixa 2)
       const pRedL = pBermStartL.clone().lerp(pWallBaseInnerL, fRedL).add(f.up.clone().multiplyScalar(0.014));
@@ -850,6 +885,7 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
       redCurbsVerts.push(pRedL.x, pRedL.y, pRedL.z);
       redCurbsVerts.push(pYellowR.x, pYellowR.y, pYellowR.z);
       redCurbsVerts.push(pRedR.x, pRedR.y, pRedR.z);
+      redCurbsUvs.push(0, vCurb + 0.5, 1, vCurb + 0.5, 0, vCurb + 0.5, 1, vCurb + 0.5);
 
       // 5. Berma (faixa 3)
       const pGrassL = pBermStartL.clone().lerp(pWallBaseInnerL, fGrassL);
@@ -887,6 +923,7 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
       guardrailLeftVerts.push(pWallTopInnerL.x, pWallTopInnerL.y, pWallTopInnerL.z);
       guardrailLeftVerts.push(pWallTopOuterL.x, pWallTopOuterL.y, pWallTopOuterL.z);
       guardrailLeftVerts.push(pWallBaseOuterL.x, pWallBaseOuterL.y, pWallBaseOuterL.z);
+      guardrailLeftUvs.push(uWall, 0, uWall, 1, uWall, 1.3, uWall, 0);
 
       const pWallTopInnerR = pWallBaseInnerR.clone().add(new THREE.Vector3(0, wallHR, 0));
       const pWallTopOuterR = pWallTopInnerR.clone().sub(f.side.clone().multiplyScalar(wallTR));
@@ -896,6 +933,7 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
       guardrailRightVerts.push(pWallTopInnerR.x, pWallTopInnerR.y, pWallTopInnerR.z);
       guardrailRightVerts.push(pWallTopOuterR.x, pWallTopOuterR.y, pWallTopOuterR.z);
       guardrailRightVerts.push(pWallBaseOuterR.x, pWallBaseOuterR.y, pWallBaseOuterR.z);
+      guardrailRightUvs.push(uWall, 0, uWall, 1, uWall, 1.3, uWall, 0);
 
       // 9. Talude / Terreno Exterior
       const isOverpass = isBridgeOverpass[i];
@@ -978,10 +1016,29 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
 
     }
 
+    // Duplicate station 0 at index N for closed-loop curb & wall UVs so there is zero wrap seam
+    if (isClosed && N >= 2) {
+      for (let k = 0; k < 12; k++) {
+        yellowCurbsVerts.push(yellowCurbsVerts[k]);
+        yellowCurbsColors.push(yellowCurbsColors[k]);
+        redCurbsVerts.push(redCurbsVerts[k]);
+        redCurbsColors.push(redCurbsColors[k]);
+        guardrailLeftVerts.push(guardrailLeftVerts[k]);
+        guardrailLeftColors.push(guardrailLeftColors[k]);
+        guardrailRightVerts.push(guardrailRightVerts[k]);
+        guardrailRightColors.push(guardrailRightColors[k]);
+      }
+      yellowCurbsUvs.push(0, curbTiles, 1, curbTiles, 0, curbTiles, 1, curbTiles);
+      redCurbsUvs.push(0, curbTiles + 0.5, 1, curbTiles + 0.5, 0, curbTiles + 0.5, 1, curbTiles + 0.5);
+      guardrailLeftUvs.push(wallTiles, 0, wallTiles, 1, wallTiles, 1.3, wallTiles, 0);
+      guardrailRightUvs.push(wallTiles, 0, wallTiles, 1, wallTiles, 1.3, wallTiles, 0);
+    }
+
     // Indexação dos Quads ao longo da pista
     const maxSegments = isClosed ? N : N - 1;
     for (let i = 0; i < maxSegments; i++) {
       const nextIdx = (i + 1) % N;
+      const wrapNextIdx = isClosed && i === maxSegments - 1 ? N : nextIdx;
       const f = frames[i];
       const fNext = frames[nextIdx];
 
@@ -999,15 +1056,16 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
       // Bandas (4 vértices por frame: 0=L_in, 1=L_out, 2=R_in, 3=R_out)
       const b0 = 4 * i;
       const bn0 = 4 * nextIdx;
+      const bn0_wrap = 4 * wrapNextIdx;
 
       // Linha Branca & Zebras Esquerdas
       if (!suppressCurbsL[i] && !suppressCurbsL[nextIdx]) {
         whiteLineIndices.push(b0, bn0, b0 + 1);
         whiteLineIndices.push(b0 + 1, bn0, bn0 + 1);
-        yellowCurbsIndices.push(b0, bn0, b0 + 1);
-        yellowCurbsIndices.push(b0 + 1, bn0, bn0 + 1);
-        redCurbsIndices.push(b0, bn0, b0 + 1);
-        redCurbsIndices.push(b0 + 1, bn0, bn0 + 1);
+        yellowCurbsIndices.push(b0, bn0_wrap, b0 + 1);
+        yellowCurbsIndices.push(b0 + 1, bn0_wrap, bn0_wrap + 1);
+        redCurbsIndices.push(b0, bn0_wrap, b0 + 1);
+        redCurbsIndices.push(b0 + 1, bn0_wrap, bn0_wrap + 1);
         grassShoulderIndices.push(b0, bn0, b0 + 1);
         grassShoulderIndices.push(b0 + 1, bn0, bn0 + 1);
         sandIndices.push(b0, bn0, b0 + 1);
@@ -1016,8 +1074,8 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
         gravelIndices.push(b0 + 1, bn0, bn0 + 1);
         if (isBridgeSeg) {
           bridgeWhiteIndices.push(b0, bn0, b0 + 1, b0 + 1, bn0, bn0 + 1);
-          bridgeYellowIndices.push(b0, bn0, b0 + 1, b0 + 1, bn0, bn0 + 1);
-          bridgeRedIndices.push(b0, bn0, b0 + 1, b0 + 1, bn0, bn0 + 1);
+          bridgeYellowIndices.push(b0, bn0_wrap, b0 + 1, b0 + 1, bn0_wrap, bn0_wrap + 1);
+          bridgeRedIndices.push(b0, bn0_wrap, b0 + 1, b0 + 1, bn0_wrap, bn0_wrap + 1);
           bridgeGrassIndices.push(b0, bn0, b0 + 1, b0 + 1, bn0, bn0 + 1);
           bridgeSandIndices.push(b0, bn0, b0 + 1, b0 + 1, bn0, bn0 + 1);
           bridgeGravelIndices.push(b0, bn0, b0 + 1, b0 + 1, bn0, bn0 + 1);
@@ -1028,10 +1086,10 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
       if (!suppressCurbsR[i] && !suppressCurbsR[nextIdx]) {
         whiteLineIndices.push(b0 + 2, b0 + 3, bn0 + 2);
         whiteLineIndices.push(b0 + 3, bn0 + 3, bn0 + 2);
-        yellowCurbsIndices.push(b0 + 2, b0 + 3, bn0 + 2);
-        yellowCurbsIndices.push(b0 + 3, bn0 + 3, bn0 + 2);
-        redCurbsIndices.push(b0 + 2, b0 + 3, bn0 + 2);
-        redCurbsIndices.push(b0 + 3, bn0 + 3, bn0 + 2);
+        yellowCurbsIndices.push(b0 + 2, b0 + 3, bn0_wrap + 2);
+        yellowCurbsIndices.push(b0 + 3, bn0_wrap + 3, bn0_wrap + 2);
+        redCurbsIndices.push(b0 + 2, b0 + 3, bn0_wrap + 2);
+        redCurbsIndices.push(b0 + 3, bn0_wrap + 3, bn0_wrap + 2);
         grassShoulderIndices.push(b0 + 2, b0 + 3, bn0 + 2);
         grassShoulderIndices.push(b0 + 3, bn0 + 3, bn0 + 2);
         sandIndices.push(b0 + 2, b0 + 3, bn0 + 2);
@@ -1040,8 +1098,8 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
         gravelIndices.push(b0 + 3, bn0 + 3, bn0 + 2);
         if (isBridgeSeg) {
           bridgeWhiteIndices.push(b0 + 2, b0 + 3, bn0 + 2, b0 + 3, bn0 + 3, bn0 + 2);
-          bridgeYellowIndices.push(b0 + 2, b0 + 3, bn0 + 2, b0 + 3, bn0 + 3, bn0 + 2);
-          bridgeRedIndices.push(b0 + 2, b0 + 3, bn0 + 2, b0 + 3, bn0 + 3, bn0 + 2);
+          bridgeYellowIndices.push(b0 + 2, b0 + 3, bn0_wrap + 2, b0 + 3, bn0_wrap + 3, bn0_wrap + 2);
+          bridgeRedIndices.push(b0 + 2, b0 + 3, bn0_wrap + 2, b0 + 3, bn0_wrap + 3, bn0_wrap + 2);
           bridgeGrassIndices.push(b0 + 2, b0 + 3, bn0 + 2, b0 + 3, bn0 + 3, bn0 + 2);
           bridgeSandIndices.push(b0 + 2, b0 + 3, bn0 + 2, b0 + 3, bn0 + 3, bn0 + 2);
           bridgeGravelIndices.push(b0 + 2, b0 + 3, bn0 + 2, b0 + 3, bn0 + 3, bn0 + 2);
@@ -1070,7 +1128,7 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
       }
 
       const l0 = 4 * i;
-      const ln0 = 4 * nextIdx;
+      const ln0 = 4 * wrapNextIdx;
       if (!suppressWallL[i] && !suppressWallL[nextIdx]) {
         guardrailLeftIndices.push(l0, ln0, l0 + 1);
         guardrailLeftIndices.push(l0 + 1, ln0, ln0 + 1);
@@ -1089,7 +1147,7 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
 
       // Muro Direito: Apenas gerado se NÃO estiver suprimido no bico agudo
       const wr0 = 4 * i;
-      const wrn0 = 4 * nextIdx;
+      const wrn0 = 4 * wrapNextIdx;
       if (!suppressWallR[i] && !suppressWallR[nextIdx]) {
         guardrailRightIndices.push(wr0, wr0 + 1, wrn0);
         guardrailRightIndices.push(wr0 + 1, wrn0 + 1, wrn0);
@@ -1127,30 +1185,33 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
       }
     }
 
-    const createGeo = (v: number[], ind: number[], colors?: number[]) => {
+    const createGeo = (v: number[], ind: number[], colors?: number[], uvs?: number[]) => {
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
       if (colors && colors.length === v.length) {
         geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+      }
+      if (uvs && uvs.length === (v.length / 3) * 2) {
+        geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
       }
       geo.setIndex(ind);
       geo.computeVertexNormals();
       return geo;
     };
 
-    const roadGeo = createGeo(roadVerts, roadIndices, roadColors);
+    const roadGeo = createGeo(roadVerts, roadIndices, roadColors, roadUvs);
     if (roadColors.length === roadVerts.length) {
       roadGeo.setAttribute("color", new THREE.Float32BufferAttribute(roadColors, 3));
     }
-    const bridgeRoadGeo = bridgeRoadIndices.length > 0 ? createGeo(roadVerts, bridgeRoadIndices, roadColors) : null;
+    const bridgeRoadGeo = bridgeRoadIndices.length > 0 ? createGeo(roadVerts, bridgeRoadIndices, roadColors, roadUvs) : null;
     const bridgeWhiteGeo = bridgeWhiteIndices.length > 0 ? createGeo(whiteLineVerts, bridgeWhiteIndices, whiteLineColors) : null;
-    const bridgeYellowGeo = bridgeYellowIndices.length > 0 ? createGeo(yellowCurbsVerts, bridgeYellowIndices, yellowCurbsColors) : null;
-    const bridgeRedGeo = bridgeRedIndices.length > 0 ? createGeo(redCurbsVerts, bridgeRedIndices, redCurbsColors) : null;
+    const bridgeYellowGeo = bridgeYellowIndices.length > 0 ? createGeo(yellowCurbsVerts, bridgeYellowIndices, yellowCurbsColors, yellowCurbsUvs) : null;
+    const bridgeRedGeo = bridgeRedIndices.length > 0 ? createGeo(redCurbsVerts, bridgeRedIndices, redCurbsColors, redCurbsUvs) : null;
     const bridgeGrassGeo = bridgeGrassIndices.length > 0 ? createGeo(grassShoulderVerts, bridgeGrassIndices, grassShoulderColors) : null;
     const bridgeSandGeo = bridgeSandIndices.length > 0 ? createGeo(sandVerts, bridgeSandIndices, sandColors) : null;
     const bridgeGravelGeo = bridgeGravelIndices.length > 0 ? createGeo(gravelVerts, bridgeGravelIndices, gravelColors) : null;
-    const bridgeWallLGeo = bridgeWallLIndices.length > 0 ? createGeo(guardrailLeftVerts, bridgeWallLIndices, guardrailLeftColors) : null;
-    const bridgeWallRGeo = bridgeWallRIndices.length > 0 ? createGeo(guardrailRightVerts, bridgeWallRIndices, guardrailRightColors) : null;
+    const bridgeWallLGeo = bridgeWallLIndices.length > 0 ? createGeo(guardrailLeftVerts, bridgeWallLIndices, guardrailLeftColors, guardrailLeftUvs) : null;
+    const bridgeWallRGeo = bridgeWallRIndices.length > 0 ? createGeo(guardrailRightVerts, bridgeWallRIndices, guardrailRightColors, guardrailRightUvs) : null;
 
     // 9.5 Túnel Opcional por Ponto (funciona a qualquer elevação: -16m, 0m, +40m...)
     const tunnelVerts: number[] = [];
@@ -1189,9 +1250,9 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
         const wR = wRArr[idx];
         return [
           f.pos.clone().addScaledVector(f.side, wL).addScaledVector(f.up, -0.5),
-          f.pos.clone().addScaledVector(f.side, wL * 0.92).addScaledVector(f.up, 7.8),
-          f.pos.clone().addScaledVector(f.up, 9.8),
-          f.pos.clone().addScaledVector(f.side, -wR * 0.92).addScaledVector(f.up, 7.8),
+          f.pos.clone().addScaledVector(f.side, wL * 0.92).addScaledVector(f.up, TUNNEL_WALL_HEIGHT),
+          f.pos.clone().addScaledVector(f.up, TUNNEL_ARCH_HEIGHT),
+          f.pos.clone().addScaledVector(f.side, -wR * 0.92).addScaledVector(f.up, TUNNEL_WALL_HEIGHT),
           f.pos.clone().addScaledVector(f.side, -wR).addScaledVector(f.up, -0.5),
         ];
       };
@@ -1202,7 +1263,7 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
         if (tunnelMask[i] && i % 10 === 0) {
           const f = srcFrames[i];
           const rotY = Math.atan2(f.tangent.x, f.tangent.z);
-          candidateTunnelLights.push({ pos: f.pos.clone().addScaledVector(f.up, 8.6), rotY });
+          candidateTunnelLights.push({ pos: f.pos.clone().addScaledVector(f.up, TUNNEL_POINT_LIGHT_HEIGHT), rotY });
         }
       }
 
@@ -1212,11 +1273,11 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
         const wR = wRArr[idx];
         const inner = getCrossPts(idx);
         const outer = [
-          f.pos.clone().addScaledVector(f.side, wL + 1.1).addScaledVector(f.up, -0.5),
-          f.pos.clone().addScaledVector(f.side, wL * 0.92 + 1.1).addScaledVector(f.up, 7.8 + 1.1),
-          f.pos.clone().addScaledVector(f.up, 9.8 + 1.1),
-          f.pos.clone().addScaledVector(f.side, -(wR * 0.92 + 1.1)).addScaledVector(f.up, 7.8 + 1.1),
-          f.pos.clone().addScaledVector(f.side, -(wR + 1.1)).addScaledVector(f.up, -0.5),
+          f.pos.clone().addScaledVector(f.side, wL + TUNNEL_PORTAL_THICKNESS).addScaledVector(f.up, -0.5),
+          f.pos.clone().addScaledVector(f.side, wL * 0.92 + TUNNEL_PORTAL_THICKNESS).addScaledVector(f.up, TUNNEL_WALL_HEIGHT + TUNNEL_PORTAL_THICKNESS),
+          f.pos.clone().addScaledVector(f.up, TUNNEL_ARCH_HEIGHT + TUNNEL_PORTAL_THICKNESS),
+          f.pos.clone().addScaledVector(f.side, -(wR * 0.92 + TUNNEL_PORTAL_THICKNESS)).addScaledVector(f.up, TUNNEL_WALL_HEIGHT + TUNNEL_PORTAL_THICKNESS),
+          f.pos.clone().addScaledVector(f.side, -(wR + TUNNEL_PORTAL_THICKNESS)).addScaledVector(f.up, -0.5),
         ];
         const tanOff = f.tangent.clone().multiplyScalar(dirSign * 0.7);
         const pBase = tunnelPortalVerts.length / 3;
@@ -1263,10 +1324,10 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
           const fB = srcFrames[nextIdx];
           const vBase = tunnelLightVerts.length / 3;
           const stripW = 1.1;
-          const l1 = fA.pos.clone().addScaledVector(fA.side, stripW).addScaledVector(fA.up, 9.45);
-          const r1 = fA.pos.clone().addScaledVector(fA.side, -stripW).addScaledVector(fA.up, 9.45);
-          const l2 = fB.pos.clone().addScaledVector(fB.side, stripW).addScaledVector(fB.up, 9.45);
-          const r2 = fB.pos.clone().addScaledVector(fB.side, -stripW).addScaledVector(fB.up, 9.45);
+          const l1 = fA.pos.clone().addScaledVector(fA.side, stripW).addScaledVector(fA.up, TUNNEL_LIGHT_STRIP_HEIGHT);
+          const r1 = fA.pos.clone().addScaledVector(fA.side, -stripW).addScaledVector(fA.up, TUNNEL_LIGHT_STRIP_HEIGHT);
+          const l2 = fB.pos.clone().addScaledVector(fB.side, stripW).addScaledVector(fB.up, TUNNEL_LIGHT_STRIP_HEIGHT);
+          const r2 = fB.pos.clone().addScaledVector(fB.side, -stripW).addScaledVector(fB.up, TUNNEL_LIGHT_STRIP_HEIGHT);
           tunnelLightVerts.push(l1.x, l1.y, l1.z, r1.x, r1.y, r1.z, l2.x, l2.y, l2.z, r2.x, r2.y, r2.z);
           tunnelLightIndices.push(vBase, vBase + 2, vBase + 1, vBase + 1, vBase + 2, vBase + 3);
         }
@@ -1334,14 +1395,14 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
     const tunnelLightGeo = tunnelLightIndices.length > 0 ? createGeo(tunnelLightVerts, tunnelLightIndices) : null;
 
     const whiteLineGeo = createGeo(whiteLineVerts, whiteLineIndices, whiteLineColors);
-    const yellowCurbsGeo = createGeo(yellowCurbsVerts, yellowCurbsIndices, yellowCurbsColors);
-    const redCurbsGeo = createGeo(redCurbsVerts, redCurbsIndices, redCurbsColors);
+    const yellowCurbsGeo = createGeo(yellowCurbsVerts, yellowCurbsIndices, yellowCurbsColors, yellowCurbsUvs);
+    const redCurbsGeo = createGeo(redCurbsVerts, redCurbsIndices, redCurbsColors, redCurbsUvs);
     const grassShoulderGeo = createGeo(grassShoulderVerts, grassShoulderIndices, grassShoulderColors);
     const sandGeo = createGeo(sandVerts, sandIndices, sandColors);
     const gravelGeo = createGeo(gravelVerts, gravelIndices, gravelColors);
     const embankmentGeo = createGeo(embankmentVerts, embankmentIndices);
-    const guardrailLeftGeo = createGeo(guardrailLeftVerts, guardrailLeftIndices, guardrailLeftColors);
-    const guardrailRightGeo = createGeo(guardrailRightVerts, guardrailRightIndices, guardrailRightColors);
+    const guardrailLeftGeo = createGeo(guardrailLeftVerts, guardrailLeftIndices, guardrailLeftColors, guardrailLeftUvs);
+    const guardrailRightGeo = createGeo(guardrailRightVerts, guardrailRightIndices, guardrailRightColors, guardrailRightUvs);
 
     // Faixa Vermelha de 1.8m nas bordas exteriores do asfalto (bem visível)
     const redRibbonVerts: number[] = [];
@@ -1395,6 +1456,7 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
 
     return {
       frames,
+      corridor,
       pitEntryTrackIdx,
       pitExitTrackIdx,
       pitIsOnLeftSide,
@@ -1966,7 +2028,7 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
 
   const branchGeos = useMemo(() => {
     if (fusedNetwork || !branches || branches.length === 0) return null;
-    return buildBranchGeometries(
+    const built = buildBranchGeometries(
       branches,
       asphaltColor,
       themeConfig.curbWarningColor,
@@ -1983,6 +2045,16 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
       geometries?.mainWallData,
       themeConfig.whiteLineColor || '#ffffff'
     );
+    if (built?.roadGeo && !built.roadGeo.getAttribute('uv')) {
+      const pos = built.roadGeo.getAttribute('position');
+      const uvs = new Float32Array(pos.count * 2);
+      for (let i = 0; i < pos.count; i++) {
+        uvs[i * 2] = pos.getX(i) / 10;
+        uvs[i * 2 + 1] = pos.getZ(i) / 10;
+      }
+      built.roadGeo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    }
+    return built;
   }, [fusedNetwork, branches, asphaltColor, themeConfig, grassColor, wallColor, spline, controlPoints, geometries]);
 
   // Pit Lane Geometries:
@@ -2357,6 +2429,35 @@ function disposeGeometriesIn(obj: object | null | undefined) {
   useEffect(() => () => { finishLineTex.dispose(); }, [finishLineTex]);
   useEffect(() => () => { pitTimingLineGeo?.dispose(); }, [pitTimingLineGeo]);
 
+  const trackTextures = useMemo(() => ({
+    asphaltTex: makeAsphaltGrainTexture(),
+    curbTex: makeCurbStripeTexture(),
+    wallTex: makeWallPanelTexture(),
+    board50Tex: makeBrakingBoardTexture('50'),
+    board100Tex: makeBrakingBoardTexture('100'),
+    board150Tex: makeBrakingBoardTexture('150'),
+    chevronTex: makeChevronBoardTexture(),
+    gantryBannerTex: makeGantryBannerTexture(),
+  }), []);
+
+  useEffect(() => () => {
+    Object.values(trackTextures).forEach((t) => t.dispose());
+  }, [trackTextures]);
+
+  const trackProps = useMemo(() => {
+    if (!geometries?.corridor || !geometries.frames) return null;
+    return buildTrackPropsData(
+      spline,
+      isClosed,
+      branches,
+      pitSpline,
+      geometries.corridor,
+      geometries.frames
+    );
+  }, [spline, isClosed, branches, pitSpline, geometries?.corridor, geometries?.frames]);
+
+  useEffect(() => () => disposeGeometriesIn(trackProps), [trackProps]);
+
 
   return (
     <group>
@@ -2368,6 +2469,7 @@ function disposeGeometriesIn(obj: object | null | undefined) {
           <mesh geometry={branchGeos.roadGeo} receiveShadow>
             <meshStandardMaterial
               color='#ffffff' vertexColors
+              map={trackTextures.asphaltTex}
               roughness={0.8}
               metalness={theme === 'night' ? 0.2 : 0.05}
               polygonOffset
@@ -2396,6 +2498,7 @@ function disposeGeometriesIn(obj: object | null | undefined) {
             <mesh geometry={fusedNetwork.fusedAsphaltGeo} receiveShadow>
               <meshStandardMaterial
                 color='#ffffff' vertexColors
+                map={trackTextures.asphaltTex}
                 roughness={0.8}
                 metalness={theme === 'night' ? 0.2 : 0.05}
                 side={THREE.DoubleSide}
@@ -2407,6 +2510,7 @@ function disposeGeometriesIn(obj: object | null | undefined) {
               <mesh geometry={geometries.bridgeRoadGeo} receiveShadow castShadow>
                 <meshStandardMaterial
                   color='#ffffff' vertexColors
+                  map={trackTextures.asphaltTex}
                   roughness={0.8}
                   metalness={theme === 'night' ? 0.2 : 0.05}
                   side={THREE.DoubleSide}
@@ -2420,6 +2524,7 @@ function disposeGeometriesIn(obj: object | null | undefined) {
           <mesh geometry={geometries.roadGeo} receiveShadow>
             <meshStandardMaterial
               color='#ffffff' vertexColors
+              map={trackTextures.asphaltTex}
               roughness={0.8}
               metalness={theme === 'night' ? 0.2 : 0.05}
               side={THREE.DoubleSide}
@@ -2519,12 +2624,12 @@ function disposeGeometriesIn(obj: object | null | undefined) {
               </TrimeshColliderWrap>
               <TrimeshColliderWrap enabled={enablePhysics} geo={fusedNetwork.yellowCurbsGeo} surface="CURB_WIDE">
                 <mesh geometry={fusedNetwork.yellowCurbsGeo} receiveShadow>
-                  <meshStandardMaterial vertexColors roughness={0.4} metalness={0.2} side={THREE.DoubleSide} />
+                  <meshStandardMaterial vertexColors map={trackTextures.curbTex} roughness={0.4} metalness={0.2} side={THREE.DoubleSide} />
                 </mesh>
               </TrimeshColliderWrap>
               <TrimeshColliderWrap enabled={enablePhysics} geo={fusedNetwork.redCurbsGeo} surface="CURB_APEX">
                 <mesh geometry={fusedNetwork.redCurbsGeo} receiveShadow>
-                  <meshStandardMaterial vertexColors roughness={0.4} metalness={0.2} side={THREE.DoubleSide} />
+                  <meshStandardMaterial vertexColors map={trackTextures.curbTex} roughness={0.4} metalness={0.2} side={THREE.DoubleSide} />
                 </mesh>
               </TrimeshColliderWrap>
               <TrimeshColliderWrap enabled={enablePhysics} geo={fusedNetwork.grassShoulderGeo} surface="GRASS">
@@ -2553,6 +2658,7 @@ function disposeGeometriesIn(obj: object | null | undefined) {
                     <meshStandardMaterial
                       color="#ffffff"
                       vertexColors
+                      map={trackTextures.wallTex}
                       roughness={0.3}
                       metalness={0.08}
                       side={THREE.DoubleSide}
@@ -2570,14 +2676,14 @@ function disposeGeometriesIn(obj: object | null | undefined) {
               {geometries.bridgeYellowGeo && (
                 <TrimeshColliderWrap enabled={enablePhysics} geo={geometries.bridgeYellowGeo} surface="CURB_WIDE">
                   <mesh geometry={geometries.bridgeYellowGeo} receiveShadow>
-                    <meshStandardMaterial vertexColors roughness={0.4} metalness={0.2} side={THREE.DoubleSide} />
+                    <meshStandardMaterial vertexColors map={trackTextures.curbTex} roughness={0.4} metalness={0.2} side={THREE.DoubleSide} />
                   </mesh>
                 </TrimeshColliderWrap>
               )}
               {geometries.bridgeRedGeo && (
                 <TrimeshColliderWrap enabled={enablePhysics} geo={geometries.bridgeRedGeo} surface="CURB_APEX">
                   <mesh geometry={geometries.bridgeRedGeo} receiveShadow>
-                    <meshStandardMaterial vertexColors roughness={0.4} metalness={0.2} side={THREE.DoubleSide} />
+                    <meshStandardMaterial vertexColors map={trackTextures.curbTex} roughness={0.4} metalness={0.2} side={THREE.DoubleSide} />
                   </mesh>
                 </TrimeshColliderWrap>
               )}
@@ -2605,14 +2711,14 @@ function disposeGeometriesIn(obj: object | null | undefined) {
               {showGuardrails && geometries.bridgeWallLGeo && (
                 <TrimeshColliderWrap enabled={enablePhysics} geo={geometries.bridgeWallLGeo} surface="WALL">
                   <mesh geometry={geometries.bridgeWallLGeo} receiveShadow>
-                    <meshStandardMaterial color="#ffffff" vertexColors roughness={0.3} metalness={0.08} side={THREE.DoubleSide} />
+                    <meshStandardMaterial color="#ffffff" vertexColors map={trackTextures.wallTex} roughness={0.3} metalness={0.08} side={THREE.DoubleSide} />
                   </mesh>
                 </TrimeshColliderWrap>
               )}
               {showGuardrails && geometries.bridgeWallRGeo && (
                 <TrimeshColliderWrap enabled={enablePhysics} geo={geometries.bridgeWallRGeo} surface="WALL">
                   <mesh geometry={geometries.bridgeWallRGeo} receiveShadow>
-                    <meshStandardMaterial color="#ffffff" vertexColors roughness={0.3} metalness={0.08} side={THREE.DoubleSide} />
+                    <meshStandardMaterial color="#ffffff" vertexColors map={trackTextures.wallTex} roughness={0.3} metalness={0.08} side={THREE.DoubleSide} />
                   </mesh>
                 </TrimeshColliderWrap>
               )}
@@ -2687,14 +2793,14 @@ function disposeGeometriesIn(obj: object | null | undefined) {
           {/* 3. Faixas Amarelas de Aviso de Curva */}
           <TrimeshColliderWrap enabled={enablePhysics} geo={geometries.yellowCurbsGeo} surface="CURB_WIDE">
             <mesh geometry={geometries.yellowCurbsGeo} receiveShadow>
-              <meshStandardMaterial vertexColors roughness={0.4} metalness={0.2} side={THREE.DoubleSide} />
+              <meshStandardMaterial vertexColors map={trackTextures.curbTex} roughness={0.4} metalness={0.2} side={THREE.DoubleSide} />
             </mesh>
           </TrimeshColliderWrap>
 
           {/* 4. Faixas Vermelhas de Ápice */}
           <TrimeshColliderWrap enabled={enablePhysics} geo={geometries.redCurbsGeo} surface="CURB_APEX">
             <mesh geometry={geometries.redCurbsGeo} receiveShadow>
-              <meshStandardMaterial vertexColors roughness={0.4} metalness={0.2} side={THREE.DoubleSide} />
+              <meshStandardMaterial vertexColors map={trackTextures.curbTex} roughness={0.4} metalness={0.2} side={THREE.DoubleSide} />
             </mesh>
           </TrimeshColliderWrap>
 
@@ -2734,6 +2840,7 @@ function disposeGeometriesIn(obj: object | null | undefined) {
                   <meshStandardMaterial
                     color="#ffffff"
                     vertexColors
+                    map={trackTextures.wallTex}
                     roughness={0.3}
                     metalness={0.08}
                     side={THREE.DoubleSide}
@@ -2745,6 +2852,7 @@ function disposeGeometriesIn(obj: object | null | undefined) {
                   <meshStandardMaterial
                     color="#ffffff"
                     vertexColors
+                    map={trackTextures.wallTex}
                     roughness={0.3}
                     metalness={0.08}
                     side={THREE.DoubleSide}
@@ -2754,6 +2862,77 @@ function disposeGeometriesIn(obj: object | null | undefined) {
             </group>
           )}
             </>
+          )}
+
+          {/* 7.5. Sinais de Travagem 150/100/50m, Setas de Curva, Pórticos de Reta e Postes GP */}
+          {trackProps && (
+            <group>
+              {trackProps.metalPostsGeo && (
+                <mesh geometry={trackProps.metalPostsGeo} castShadow receiveShadow>
+                  <meshStandardMaterial color="#334155" roughness={0.45} metalness={0.6} />
+                </mesh>
+              )}
+              {trackProps.lightHeadsGeo && (
+                <mesh geometry={trackProps.lightHeadsGeo}>
+                  <meshStandardMaterial
+                    color="#f8fafc"
+                    emissive="#fef3c7"
+                    emissiveIntensity={theme === 'night' ? 3.2 : theme === 'sunset' ? 1.4 : 0.25}
+                    roughness={0.2}
+                  />
+                </mesh>
+              )}
+              {trackProps.boards150Geo && (
+                <mesh geometry={trackProps.boards150Geo}>
+                  <meshStandardMaterial
+                    map={trackTextures.board150Tex}
+                    roughness={0.45}
+                    emissive="#ffffff"
+                    emissiveIntensity={theme === 'night' ? 0.35 : 0.05}
+                  />
+                </mesh>
+              )}
+              {trackProps.boards100Geo && (
+                <mesh geometry={trackProps.boards100Geo}>
+                  <meshStandardMaterial
+                    map={trackTextures.board100Tex}
+                    roughness={0.45}
+                    emissive="#ffffff"
+                    emissiveIntensity={theme === 'night' ? 0.35 : 0.05}
+                  />
+                </mesh>
+              )}
+              {trackProps.boards50Geo && (
+                <mesh geometry={trackProps.boards50Geo}>
+                  <meshStandardMaterial
+                    map={trackTextures.board50Tex}
+                    roughness={0.45}
+                    emissive="#ffffff"
+                    emissiveIntensity={theme === 'night' ? 0.35 : 0.05}
+                  />
+                </mesh>
+              )}
+              {trackProps.chevronsGeo && (
+                <mesh geometry={trackProps.chevronsGeo}>
+                  <meshStandardMaterial
+                    map={trackTextures.chevronTex}
+                    roughness={0.4}
+                    emissive="#facc15"
+                    emissiveIntensity={theme === 'night' ? 0.45 : 0.08}
+                  />
+                </mesh>
+              )}
+              {trackProps.gantryBannerGeo && (
+                <mesh geometry={trackProps.gantryBannerGeo}>
+                  <meshStandardMaterial
+                    map={trackTextures.gantryBannerTex}
+                    roughness={0.45}
+                    emissive="#ffffff"
+                    emissiveIntensity={theme === 'night' ? 0.35 : 0.06}
+                  />
+                </mesh>
+              )}
+            </group>
           )}
         </>
       )}
@@ -2793,8 +2972,8 @@ function disposeGeometriesIn(obj: object | null | undefined) {
               key={`tlight_${idx}`}
               position={[tl.pos.x, tl.pos.y - 0.6, tl.pos.z]}
               color="#fef3c7"
-              intensity={45}
-              distance={42}
+              intensity={75}
+              distance={55}
               decay={1.6}
             />
           ))}

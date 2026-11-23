@@ -1566,22 +1566,34 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
                           ? `${item.valL.toFixed(1)} - ${item.valR.toFixed(1)}`
                           : (zoneSide === 'R' ? item.valR : item.valL).toFixed(1);
                         const captureSide = zoneSide;
-                        const commitInput = (raw: string) => {
-                          const trimmed = raw.trim().replace(/,/g, '.');
-                          if (!trimmed) return;
+                        const commitInput = (el: HTMLInputElement) => {
+                          const trimmed = el.value.trim().replace(/,/g, '.');
+                          if (!trimmed) {
+                            el.value = displayVal;
+                            return;
+                          }
                           const clampV = (v: number) => Math.max(item.min, Math.min(item.max, Math.round(v * 10) / 10));
                           if (captureSide === 'both' && item.key !== 'width' && trimmed.includes('-')) {
                             const parts = trimmed.split('-').map(s => parseFloat(s.trim()));
                             if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1]) && props.onUpdateNodeProperties) {
+                              const cL = clampV(parts[0]);
+                              const cR = clampV(parts[1]);
                               props.onUpdateNodeProperties({
-                                [item.key + 'L']: clampV(parts[0]),
-                                [item.key + 'R']: clampV(parts[1]),
+                                [item.key + 'L']: cL,
+                                [item.key + 'R']: cR,
                               } as Partial<SplineNode>);
+                              el.value = `${cL.toFixed(1)} - ${cR.toFixed(1)}`;
                               return;
                             }
                           }
                           const n = parseFloat(trimmed);
-                          if (!isNaN(n)) applyZone(item.key, clampV(n), captureSide);
+                          if (!isNaN(n)) {
+                            const clamped = clampV(n);
+                            applyZone(item.key, clamped, captureSide);
+                            el.value = clamped.toFixed(1);
+                          } else {
+                            el.value = displayVal;
+                          }
                         };
                         return (
                         <div key={item.key} style={{ background: 'rgba(255,255,255,0.04)', borderRadius: 6, padding: '4px', border: isMixedBoth ? '1px solid rgba(250, 204, 21, 0.45)' : '1px solid rgba(255,255,255,0.08)', textAlign: 'center' }}>
@@ -1596,11 +1608,11 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
                               max={item.max}
                               defaultValue={displayVal}
                               key={`${activeKey}_${captureSide}_${item.key}_${item.valL.toFixed(1)}_${item.valR.toFixed(1)}`}
-                              onBlur={(e) => commitInput(e.target.value)}
+                              onBlur={(e) => commitInput(e.currentTarget)}
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter') {
-                                  commitInput((e.target as HTMLInputElement).value);
-                                  (e.target as HTMLInputElement).blur();
+                                  commitInput(e.currentTarget);
+                                  e.currentTarget.blur();
                                 }
                               }}
                               style={{

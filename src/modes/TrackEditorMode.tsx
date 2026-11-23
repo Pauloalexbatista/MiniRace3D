@@ -334,6 +334,13 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedPointIndex, selectedBranchNode, controlPoints.length]);
 
+  const resolveTargetPointIndex = (): number | null => {
+    const targetIdx = selectedPointIndex !== null ? selectedPointIndex : (controlPoints.length > 0 ? 0 : null);
+    if (targetIdx === null || targetIdx >= controlPoints.length) return null;
+    if (selectedPointIndex === null) setSelectedPointIndex(targetIdx);
+    return targetIdx;
+  };
+
   const handleUpdateSelectedShoulderWidth = (newShoulder: number) => {
     const roundedSW = Math.round(newShoulder * 10) / 10;
     if (selectedBranchNode !== null) {
@@ -344,11 +351,13 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
       ));
       return;
     }
-    if (selectedPointIndex === null) return;
+    const targetIdx = resolveTargetPointIndex();
+    if (targetIdx === null) return;
     setControlPoints(prev => {
+      if (targetIdx >= prev.length) return prev;
       const next = [...prev];
-      next[selectedPointIndex] = {
-        ...next[selectedPointIndex],
+      next[targetIdx] = {
+        ...next[targetIdx],
         shoulderWidth: roundedSW
       };
       return next;
@@ -365,14 +374,16 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
       ));
       return;
     }
-    if (selectedPointIndex === null) return;
+    const targetIdx = resolveTargetPointIndex();
+    if (targetIdx === null) return;
     setElevationType('custom');
-    const targetPt = controlPoints[selectedPointIndex];
+    const targetPt = controlPoints[targetIdx];
 
     setControlPoints(prev => {
+      if (targetIdx >= prev.length) return prev;
       const next = [...prev];
-      next[selectedPointIndex] = {
-        ...next[selectedPointIndex],
+      next[targetIdx] = {
+        ...next[targetIdx],
         z: roundedZ
       };
       return next;
@@ -384,8 +395,8 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
       setBranches(prev => prev.map(b => ({
         ...b,
         points: b.points.map(bp => {
-          if (bp.linkedMainNodeIndex === selectedPointIndex || Math.hypot(bp.x - targetPt.x, bp.y - targetPt.y) < 2.0) {
-            return { ...bp, z: roundedZ, linkedMainNodeIndex: selectedPointIndex };
+          if (bp.linkedMainNodeIndex === targetIdx || Math.hypot(bp.x - targetPt.x, bp.y - targetPt.y) < 2.0) {
+            return { ...bp, z: roundedZ, linkedMainNodeIndex: targetIdx };
           }
           return bp;
         })
@@ -403,11 +414,13 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
       ));
       return;
     }
-    if (selectedPointIndex === null) return;
+    const targetIdx = resolveTargetPointIndex();
+    if (targetIdx === null) return;
     setControlPoints(prev => {
+      if (targetIdx >= prev.length) return prev;
       const next = [...prev];
-      next[selectedPointIndex] = {
-        ...next[selectedPointIndex],
+      next[targetIdx] = {
+        ...next[targetIdx],
         width: roundedW
       };
       return next;
@@ -418,6 +431,7 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
     if (applyToAll) {
       setControlPoints(prev => prev.map(p => ({ ...p, ...updates })));
       setBranches(prev => prev.map(b => ({ ...b, points: b.points.map(bp => ({ ...bp, ...updates })) })));
+      showToast('✓ Perfil aplicado a toda a pista!');
       return;
     }
     if (selectedBranchNode !== null) {
@@ -428,10 +442,12 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
       ));
       return;
     }
+    const targetIdx = resolveTargetPointIndex();
+    if (targetIdx === null) return;
     setControlPoints(prev => {
-      if (selectedPointIndex !== null && selectedPointIndex < prev.length) {
+      if (targetIdx < prev.length) {
         const next = [...prev];
-        next[selectedPointIndex] = { ...next[selectedPointIndex], ...updates };
+        next[targetIdx] = { ...next[targetIdx], ...updates };
         return next;
       }
       return prev;
@@ -447,11 +463,13 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
       ));
       return;
     }
-    if (selectedPointIndex === null) return;
+    const targetIdx = resolveTargetPointIndex();
+    if (targetIdx === null) return;
     setControlPoints(prev => {
+      if (targetIdx >= prev.length) return prev;
       const next = [...prev];
-      next[selectedPointIndex] = {
-        ...next[selectedPointIndex],
+      next[targetIdx] = {
+        ...next[targetIdx],
         banking: newBanking
       };
       return next;
@@ -2363,7 +2381,12 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
       {/* STUDIO SIDEBAR */}
       <StudioSidebar
         activeTab={studioTab}
-        onActiveTabChange={(t) => setStudioTab(t)}
+        onActiveTabChange={(t) => {
+          setStudioTab(t);
+          if (t === 'modeling3d' && selectedPointIndex === null && !selectedBranchNode && controlPoints.length > 0) {
+            setSelectedPointIndex(0);
+          }
+        }}
         isOpen={isStudioOpen}
         onClose={() => setIsStudioOpen(false)}
         trackName={trackName}

@@ -429,30 +429,53 @@ function buildBandBetweenPolylines(
   verts: number[],
   colors: number[],
   indices: number[],
-  skipEdge?: boolean[]
+  skipEdge?: boolean[],
+  uvs?: number[],
+  tileMeters: number = 4.0,
+  uvPhase: number = 0
 ) {
   const N = innerPts.length;
   if (N < 3) return;
   const baseIdx = verts.length / 3;
 
-  for (let i = 0; i < N; i++) {
-    const pIn = innerPts[i];
-    const pOut = outerPts[i];
-    const col = colorsPerVertex[i];
+  let totalLen = 0;
+  const cumS: number[] = [];
+  if (uvs) {
+    cumS.push(0);
+    for (let i = 0; i < N; i++) {
+      const a = innerPts[i];
+      const b = innerPts[(i + 1) % N];
+      totalLen += Math.hypot(b.x - a.x, b.z - a.z);
+      cumS.push(totalLen);
+    }
+  }
+  const tiles = uvs ? Math.max(1, Math.round(totalLen / Math.max(0.5, tileMeters))) : 1;
+  const count = uvs ? N + 1 : N;
+
+  for (let i = 0; i < count; i++) {
+    const srcIdx = i % N;
+    const pIn = innerPts[srcIdx];
+    const pOut = outerPts[srcIdx];
+    const col = colorsPerVertex[srcIdx];
     verts.push(pIn.x, pIn.y + yOffset, pIn.z);
     verts.push(pOut.x, pOut.y + yOffset, pOut.z);
     colors.push(...col, ...col);
+    if (uvs) {
+      const v = (totalLen > 1e-4 ? (cumS[i] / totalLen) * tiles : 0) + uvPhase;
+      uvs.push(0, v, 1, v);
+    }
   }
 
   for (let i = 0; i < N; i++) {
     if (skipEdge && skipEdge[i]) continue;
-    const nextIdx = (i + 1) % N;
+    const nextIdx = i + 1;
+    const srcNext = nextIdx % N;
     const hasWidth =
       innerPts[i].distanceToSquared(outerPts[i]) > 1e-4 ||
-      innerPts[nextIdx].distanceToSquared(outerPts[nextIdx]) > 1e-4;
+      innerPts[srcNext].distanceToSquared(outerPts[srcNext]) > 1e-4;
     if (!hasWidth) continue;
     const b0 = baseIdx + i * 2;
-    const bn0 = baseIdx + nextIdx * 2;
+    const bn0 = baseIdx + (uvs ? nextIdx : srcNext) * 2;
     indices.push(b0, bn0, b0 + 1);
     indices.push(b0 + 1, bn0, bn0 + 1);
   }
@@ -508,23 +531,35 @@ function buildClosedWallForRing(
   verts: number[],
   colors: number[],
   indices: number[],
-  skipEdge?: boolean[]
+  skipEdge?: boolean[],
+  uvs?: number[],
+  tileMeters: number = 6.0
 ) {
   const N = wallInnerPts.length;
   if (N < 3) return;
 
   let area = 0;
+  let totalLen = 0;
+  const cumS: number[] = [];
+  if (uvs) cumS.push(0);
   for (let i = 0; i < N; i++) {
     const p1 = wallInnerPts[i];
     const p2 = wallInnerPts[(i + 1) % N];
     area += (p2.x - p1.x) * (p2.z + p1.z);
+    if (uvs) {
+      totalLen += Math.hypot(p2.x - p1.x, p2.z - p1.z);
+      cumS.push(totalLen);
+    }
   }
+  const tiles = uvs ? Math.max(1, Math.round(totalLen / Math.max(0.5, tileMeters))) : 1;
 
   const baseIdx = verts.length / 3;
-  for (let i = 0; i < N; i++) {
-    const prev = wallInnerPts[(i - 1 + N) % N];
-    const curr = wallInnerPts[i];
-    const next = wallInnerPts[(i + 1) % N];
+  const count = uvs ? N + 1 : N;
+  for (let i = 0; i < count; i++) {
+    const srcIdx = i % N;
+    const prev = wallInnerPts[(srcIdx - 1 + N) % N];
+    const curr = wallInnerPts[srcIdx];
+    const next = wallInnerPts[(srcIdx + 1) % N];
 
     const t1 = new THREE.Vector2(curr.x - prev.x, curr.z - prev.z);
     if (t1.lengthSq() > 1e-8) t1.normalize();
@@ -547,18 +582,24 @@ function buildClosedWallForRing(
     verts.push(curr.x + norm.x * wallWidth, yTop, curr.z + norm.y * wallWidth);
     verts.push(curr.x + norm.x * wallWidth, yBot, curr.z + norm.y * wallWidth);
 
-    const col = colorsPerVertex[i] || defaultRGB;
+    const col = colorsPerVertex[srcIdx] || defaultRGB;
     colors.push(...col, ...col, ...col, ...col);
+
+    if (uvs) {
+      const u = totalLen > 1e-4 ? (cumS[i] / totalLen) * tiles : 0;
+      uvs.push(u, 0, u, 1, u, 1.3, u, 0);
+    }
   }
 
   for (let i = 0; i < N; i++) {
     if (skipEdge && skipEdge[i]) continue;
-    const nextIdx = (i + 1) % N;
+    const nextIdx = uvs ? i + 1 : (i + 1) % N;
+    const srcNext = (i + 1) % N;
     const b0 = baseIdx + i * 4;
     const bn0 = baseIdx + nextIdx * 4;
 
     const pCurr = wallInnerPts[i];
-    const pNext = wallInnerPts[nextIdx];
+    const pNext = wallInnerPts[srcNext];
     const tx = pNext.x - pCurr.x;
     const tz = pNext.z - pCurr.z;
     if (tx * tx + tz * tz < 0.01) continue;
@@ -586,11 +627,24 @@ function buildClosedWallForRing(
   }
 }
 
-function makeBufferGeo(verts: number[], indices: number[], colors?: number[]): THREE.BufferGeometry {
+function buildPlanarUvs(verts: number[], tileMeters: number): number[] {
+  const uvs: number[] = new Array((verts.length / 3) * 2);
+  const inv = 1 / Math.max(0.5, tileMeters);
+  for (let i = 0, j = 0; i < verts.length; i += 3, j += 2) {
+    uvs[j] = verts[i] * inv;
+    uvs[j + 1] = verts[i + 2] * inv;
+  }
+  return uvs;
+}
+
+function makeBufferGeo(verts: number[], indices: number[], colors?: number[], uvs?: number[]): THREE.BufferGeometry {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
   if (colors && colors.length > 0) {
     geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  }
+  if (uvs && uvs.length === (verts.length / 3) * 2) {
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   }
   geo.setIndex(indices);
   geo.computeVertexNormals();
@@ -982,10 +1036,12 @@ export function buildUnifiedRoadNetwork(
 
   const yellowVerts: number[] = [];
   const yellowColors: number[] = [];
+  const yellowUvs: number[] = [];
   const yellowIndices: number[] = [];
 
   const redVerts: number[] = [];
   const redColors: number[] = [];
+  const redUvs: number[] = [];
   const redIndices: number[] = [];
 
   const grassVerts: number[] = [];
@@ -1002,6 +1058,7 @@ export function buildUnifiedRoadNetwork(
 
   const wallVerts: number[] = [];
   const wallColors: number[] = [];
+  const wallUvs: number[] = [];
   const wallIndices: number[] = [];
 
   const embankmentVerts: number[] = [];
@@ -1356,12 +1413,14 @@ export function buildUnifiedRoadNetwork(
           buildBandBetweenPolylines(
             p1, p2, 0.03,
             sampled.map((s) => s.zone.cYellow),
-            yellowVerts, yellowColors, yellowIndices, skipEdge
+            yellowVerts, yellowColors, yellowIndices, skipEdge,
+            yellowUvs, 4.0, 0
           );
           buildBandBetweenPolylines(
             p2, p3, 0.03,
             sampled.map((s) => s.zone.cRed),
-            redVerts, redColors, redIndices, skipEdge
+            redVerts, redColors, redIndices, skipEdge,
+            redUvs, 4.0, 0.5
           );
           buildBandBetweenPolylines(
             p3, p4, 0.02,
@@ -1395,7 +1454,9 @@ export function buildUnifiedRoadNetwork(
             wallVerts,
             wallColors,
             wallIndices,
-            skipEdge
+            skipEdge,
+            wallUvs,
+            6.0
           );
 
           // Safe Embankment Slopes (Abas laterais de relevo até groundY, sem invadir estradas/pontes!)
@@ -1508,20 +1569,21 @@ export function buildUnifiedRoadNetwork(
   outlineGeo.setAttribute('position', new THREE.Float32BufferAttribute(outlineVerts, 3));
 
   const grassShoulderGeo = makeBufferGeo(grassVerts, grassIndices, grassColors);
+  const asphaltUvs = buildPlanarUvs(asphaltVerts, 10);
 
   return {
     outerRings,
     holeRings,
-    fusedAsphaltGeo: makeBufferGeo(asphaltVerts, asphaltIndices, asphaltColors),
+    fusedAsphaltGeo: makeBufferGeo(asphaltVerts, asphaltIndices, asphaltColors, asphaltUvs),
     whiteLineGeo: makeBufferGeo(whiteVerts, whiteIndices, whiteColors),
-    yellowCurbsGeo: makeBufferGeo(yellowVerts, yellowIndices, yellowColors),
-    redCurbsGeo: makeBufferGeo(redVerts, redIndices, redColors),
+    yellowCurbsGeo: makeBufferGeo(yellowVerts, yellowIndices, yellowColors, yellowUvs),
+    redCurbsGeo: makeBufferGeo(redVerts, redIndices, redColors, redUvs),
     grassShoulderGeo,
     sandGeo: makeBufferGeo(sandVerts, sandIndices, sandColors),
     gravelGeo: makeBufferGeo(gravelVerts, gravelIndices, gravelColors),
     embankmentGeo: makeBufferGeo(embankmentVerts, embankmentIndices),
     shoulderGeo: grassShoulderGeo,
-    wallGeo: makeBufferGeo(wallVerts, wallIndices, wallColors),
+    wallGeo: makeBufferGeo(wallVerts, wallIndices, wallColors, wallUvs),
     ribbonGeo: makeBufferGeo(ribbonVerts, ribbonIndices, ribbonColors),
     outlineGeo,
   };

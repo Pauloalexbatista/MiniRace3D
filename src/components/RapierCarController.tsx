@@ -9,6 +9,10 @@ import { Car3D, CarClass } from './Car3D';
 import { publishTelemetry, TelemetryData, PitStopStatus, RaceStartPhase, registerStartCountdownHandler } from '../telemetryStore';
 import type { LocalCarNetSample } from '../multiplayer/types';
 import {
+  OUTDOOR_CHASE_BACK,
+  OUTDOOR_CHASE_HEIGHT,
+  TUNNEL_BACK,
+  TUNNEL_HEIGHT,
   buildTunnelIndex,
   detectCarTunnelState,
   computeTunnelChaseDesired,
@@ -253,6 +257,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
   const brakeLightRef = useRef(0);
   const camPosRef = useRef(new THREE.Vector3());
   const camLookRef = useRef(new THREE.Vector3());
+  const camFovRef = useRef(50);
   const tunnelBlendRef = useRef(0);
   const telemetryAccRef = useRef(0);
   const netEmitAccRef = useRef(0);
@@ -1636,17 +1641,16 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
             : null;
 
         if (carTunnel?.status === 'inside') {
-          tunnelBlendRef.current = Math.max(tunnelBlendRef.current, 0.85);
           tunnelBlendRef.current = THREE.MathUtils.lerp(
             tunnelBlendRef.current,
             1,
-            1 - Math.exp(-18 * visDt)
+            1 - Math.exp(-8 * visDt)
           );
         } else if (carTunnel?.status === 'approaching') {
           tunnelBlendRef.current = THREE.MathUtils.lerp(
             tunnelBlendRef.current,
             carTunnel.blend,
-            1 - Math.exp(-10 * visDt)
+            1 - Math.exp(-8 * visDt)
           );
         } else {
           tunnelBlendRef.current = THREE.MathUtils.lerp(
@@ -1669,15 +1673,15 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
           tmpCamOffset
             .set(
               0,
-              THREE.MathUtils.lerp(5.2, 2.65, blend),
-              -THREE.MathUtils.lerp(13.0, 6.5, blend)
+              THREE.MathUtils.lerp(OUTDOOR_CHASE_HEIGHT, TUNNEL_HEIGHT, blend),
+              -THREE.MathUtils.lerp(OUTDOOR_CHASE_BACK, TUNNEL_BACK, blend)
             )
             .applyQuaternion(tmpCamCarQuat);
           tmpDesiredCam.copy(tmpCamCarPos).add(tmpCamOffset);
         }
 
         if (camPosRef.current.lengthSq() === 0) camPosRef.current.copy(tmpDesiredCam);
-        const camRate = 9 + 9 * tunnelBlendRef.current;
+        const camRate = 9 + 2 * tunnelBlendRef.current;
         const camAlpha = 1 - Math.exp(-camRate * visDt);
         camPosRef.current.lerp(tmpDesiredCam, camAlpha);
 
@@ -1719,8 +1723,8 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
           }
         }
 
-        const lookAhead = 8 + 2 * tunnelBlendRef.current;
-        tmpLookUpOffset.set(0, 1.5 - 0.35 * tunnelBlendRef.current, 0);
+        const lookAhead = 8;
+        tmpLookUpOffset.set(0, 1.5, 0);
         tmpLookTarget
           .copy(tmpCamCarPos)
           .addScaledVector(tmpCamForward, lookAhead)
@@ -1729,15 +1733,47 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
         const lookAlpha = 1 - Math.exp(-12 * visDt);
         camLookRef.current.lerp(tmpLookTarget, lookAlpha);
 
+        const speedFrac = Math.max(0, Math.min(1, (speedKmh - 60) / 260));
+        const targetFov = 50 + 15 * Math.pow(speedFrac, 1.25);
+        camFovRef.current = THREE.MathUtils.lerp(camFovRef.current, targetFov, 1 - Math.exp(-5 * visDt));
+        const perspCam = state.camera as THREE.PerspectiveCamera;
+        if (perspCam && 'fov' in perspCam && Math.abs(perspCam.fov - camFovRef.current) > 0.02) {
+          perspCam.fov = camFovRef.current;
+          perspCam.updateProjectionMatrix();
+        }
+
         state.camera.position.copy(camPosRef.current);
+        if (speedKmh > 170) {
+          const shakeFrac = Math.max(0, Math.min(1, (speedKmh - 170) / 160));
+          const amp = 0.026 * shakeFrac;
+          const et = state.clock.elapsedTime;
+          state.camera.position.x += Math.sin(et * 43.0) * amp;
+          state.camera.position.y += Math.cos(et * 57.0) * amp * 0.7;
+        }
         state.camera.lookAt(camLookRef.current);
       } else {
+        const speedFrac = Math.max(0, Math.min(1, (speedKmh - 60) / 260));
+        const targetFov = 52 + 13 * Math.pow(speedFrac, 1.2);
+        camFovRef.current = THREE.MathUtils.lerp(camFovRef.current, targetFov, 1 - Math.exp(-5 * visDt));
+        const perspCam = state.camera as THREE.PerspectiveCamera;
+        if (perspCam && 'fov' in perspCam && Math.abs(perspCam.fov - camFovRef.current) > 0.02) {
+          perspCam.fov = camFovRef.current;
+          perspCam.updateProjectionMatrix();
+        }
+
         tmpCamOffset.set(0, 1.55, 0.35).applyQuaternion(tmpCamCarQuat);
         tmpDesiredCam.copy(tmpCamCarPos).add(tmpCamOffset);
         tmpCamOffset.set(0, 1.35, 18).applyQuaternion(tmpCamCarQuat);
         tmpLookTarget.copy(tmpCamCarPos).add(tmpCamOffset);
         state.camera.position.copy(tmpDesiredCam);
         state.camera.lookAt(tmpLookTarget);
+      }
+    } else {
+      camFovRef.current = THREE.MathUtils.lerp(camFovRef.current, 50, 1 - Math.exp(-6 * visDt));
+      const perspCam = state.camera as THREE.PerspectiveCamera;
+      if (perspCam && 'fov' in perspCam && Math.abs(perspCam.fov - camFovRef.current) > 0.02) {
+        perspCam.fov = camFovRef.current;
+        perspCam.updateProjectionMatrix();
       }
     }
 
