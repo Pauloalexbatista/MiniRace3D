@@ -7,6 +7,7 @@ export interface HomeScreenProps {
   onSelectRace: () => void;
   savedCircuitsCount: number;
   activeRoomsCount: number;
+  onlinePlayersCount?: number;
   connectionState: ConnectionState;
 }
 
@@ -15,6 +16,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
   onSelectRace,
   savedCircuitsCount,
   activeRoomsCount,
+  onlinePlayersCount = 0,
   connectionState,
 }) => {
   const isOnline = connectionState === 'connected';
@@ -89,7 +91,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             {isOnline ? <Wifi size={15} /> : <WifiOff size={15} />}
             <span>
               {isOnline
-                ? `🟢 Servidor Online • ${activeRoomsCount} ${activeRoomsCount === 1 ? 'sala ativa' : 'salas ativas'}`
+                ? `🟢 Servidor Online • ${onlinePlayersCount} ${onlinePlayersCount === 1 ? 'piloto online' : 'pilotos online'} • ${activeRoomsCount} ${activeRoomsCount === 1 ? 'sala ativa' : 'salas ativas'}`
                 : isConnecting
                 ? '🟡 A ligar ao servidor de salas...'
                 : '🔴 Modo Offline (Solo disponível)'}

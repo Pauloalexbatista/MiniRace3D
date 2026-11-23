@@ -625,6 +625,55 @@ function createNoiseBuffer(ctx: AudioContext, seconds = 2): AudioBuffer {
   return buf;
 }
 
+export interface ListenerAudioPose {
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  qx: number;
+  qy: number;
+  qz: number;
+  qw: number;
+}
+
+export interface NearbyCarAudioSample {
+  id: string;
+  carClass: CarClass;
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  speedKmh: number;
+}
+
+interface OpponentVoiceNode {
+  oscA: OscillatorNode;
+  oscB: OscillatorNode;
+  gainA: GainNode;
+  gainB: GainNode;
+  lp: BiquadFilterNode;
+  panner: StereoPannerNode | null;
+  outGain: GainNode;
+}
+
+const OPPONENT_VOICE_COUNT = 4;
+const OPPONENT_MAX_DIST_M = 95;
+const OPPONENT_MAX_DIST_SQ = OPPONENT_MAX_DIST_M * OPPONENT_MAX_DIST_M;
+
+function hashDetune(id: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  const frac = (h >>> 0) / 0xffffffff;
+  return 0.97 + frac * 0.06;
+}
+
 class CarSoundEngine {
   private ctx: AudioContext | null = null;
   private compressor: DynamicsCompressorNode | null = null;
@@ -667,6 +716,8 @@ class CarSoundEngine {
 
   private offroadBand: BiquadFilterNode | null = null;
   private offroadGain: GainNode | null = null;
+
+  private opponentVoices: OpponentVoiceNode[] = [];
 
   private mem: EngineAcousticMemory = createEngineMemory('f1');
   private lastClass: CarClass = 'f1';
@@ -969,6 +1020,60 @@ class CarSoundEngine {
     offSrc.start();
     this.offroadBand = offBp;
     this.offroadGain = offGain;
+
+    // Fixed pool of 4 spatialized opponent engine voices
+    this.opponentVoices = [];
+    for (let i = 0; i < OPPONENT_VOICE_COUNT; i++) {
+      const oppOscA = ctx.createOscillator();
+      oppOscA.type = 'sawtooth';
+      oppOscA.frequency.value = 120;
+      const oppOscB = ctx.createOscillator();
+      oppOscB.type = 'sawtooth';
+      oppOscB.frequency.value = 180;
+
+      const oppGainA = ctx.createGain();
+      oppGainA.gain.value = 0.52;
+      const oppGainB = ctx.createGain();
+      oppGainB.gain.value = 0.34;
+
+      const oppLp = ctx.createBiquadFilter();
+      oppLp.type = 'lowpass';
+      oppLp.frequency.value = 1200;
+      oppLp.Q.value = 1.1;
+
+      const oppPanner =
+        typeof ctx.createStereoPanner === 'function' ? ctx.createStereoPanner() : null;
+      if (oppPanner) oppPanner.pan.value = 0;
+
+      const oppOut = ctx.createGain();
+      oppOut.gain.value = 0;
+
+      oppOscA.connect(oppGainA);
+      oppOscB.connect(oppGainB);
+      oppGainA.connect(oppLp);
+      oppGainB.connect(oppLp);
+      if (oppPanner) {
+        oppLp.connect(oppPanner);
+        oppPanner.connect(oppOut);
+      } else {
+        oppLp.connect(oppOut);
+      }
+      oppOut.connect(dryBus);
+      oppOut.connect(tunnelSend);
+
+      oppOscA.start();
+      oppOscB.start();
+
+      this.opponentVoices.push({
+        oscA: oppOscA,
+        oscB: oppOscB,
+        gainA: oppGainA,
+        gainB: oppGainB,
+        lp: oppLp,
+        panner: oppPanner,
+        outGain: oppOut,
+      });
+    }
   }
 
   private canEmitOneShot(): boolean {
@@ -1317,6 +1422,119 @@ class CarSoundEngine {
     return acoustic;
   }
 
+  public silenceNearbyCars(): void {
+    if (!this.ctx || !this.isInitialized) return;
+    const now = this.ctx.currentTime;
+    for (let i = 0; i < this.opponentVoices.length; i++) {
+      this.safeSetTarget(this.opponentVoices[i].outGain.gain, 0, now, 0.04);
+    }
+  }
+
+  public updateNearbyCars(
+    active: boolean,
+    listener: ListenerAudioPose | null,
+    opponents: NearbyCarAudioSample[]
+  ): void {
+    if (
+      !active ||
+      !listener ||
+      !this.ctx ||
+      !this.isInitialized ||
+      this.tabHidden ||
+      getAudioSettings().muted
+    ) {
+      this.silenceNearbyCars();
+      return;
+    }
+
+    const now = this.ctx.currentTime;
+
+    // Normalize listener quaternion and compute screen-right vector (-X rotated by q)
+    const qLen = Math.hypot(listener.qx, listener.qy, listener.qz, listener.qw) || 1;
+    const qx = listener.qx / qLen;
+    const qy = listener.qy / qLen;
+    const qz = listener.qz / qLen;
+    const qw = listener.qw / qLen;
+    const screenRightX = -(1 - 2 * (qy * qy + qz * qz));
+    const screenRightY = -2 * (qx * qy + qw * qz);
+    const screenRightZ = -2 * (qx * qz - qw * qy);
+
+    const candidates: Array<{ sample: NearbyCarAudioSample; dx: number; dy: number; dz: number; distSq: number }> = [];
+    for (let i = 0; i < opponents.length; i++) {
+      const car = opponents[i];
+      const dx = car.x - listener.x;
+      const dy = car.y - listener.y;
+      const dz = car.z - listener.z;
+      const distSq = dx * dx + dy * dy + dz * dz;
+      if (Number.isFinite(distSq) && distSq < OPPONENT_MAX_DIST_SQ) {
+        candidates.push({ sample: car, dx, dy, dz, distSq });
+      }
+    }
+
+    if (candidates.length > 1) {
+      candidates.sort((a, b) => a.distSq - b.distSq);
+    }
+
+    for (let slot = 0; slot < this.opponentVoices.length; slot++) {
+      const voice = this.opponentVoices[slot];
+      const cand = candidates[slot];
+      if (!cand) {
+        this.safeSetTarget(voice.outGain.gain, 0, now, 0.045);
+        continue;
+      }
+
+      const { sample: car, dx, dy, dz, distSq } = cand;
+      const dist = Math.sqrt(distSq);
+      const distFade = Math.max(0, 1 - dist / OPPONENT_MAX_DIST_M);
+      const attenuation = (1 / (1 + (dist / 8) * (dist / 8) * 0.42)) * distFade;
+      const speedKmh = Math.max(0, Number.isFinite(car.speedKmh) ? car.speedKmh : 0);
+      const speedGain = 0.30 + 0.70 * Math.min(1, speedKmh / 150);
+      const targetGain = Math.min(0.28, attenuation * speedGain * 0.34);
+
+      const relVx = (car.vx || 0) - (listener.vx || 0);
+      const relVy = (car.vy || 0) - (listener.vy || 0);
+      const relVz = (car.vz || 0) - (listener.vz || 0);
+      const vApproach = -(relVx * dx + relVy * dy + relVz * dz) / Math.max(1.5, dist);
+      const doppler = clampRange(1 + vApproach / 343, 0.78, 1.28);
+
+      const prof = CAR_AUDIO_PROFILES[car.carClass] ?? CAR_AUDIO_PROFILES.f1;
+      const speedNorm = clamp01(speedKmh / 240);
+      let rpmNorm = 0.06;
+      if (speedKmh > 3) {
+        let gear = 1;
+        for (let g = 1; g < prof.numGears; g++) {
+          if (speedNorm >= gearUpperSpeedFrac(g, prof.numGears)) gear = g + 1;
+        }
+        const lo = gearLowerSpeedFrac(gear, prof.numGears);
+        const hi = Math.max(lo + 0.06, gearUpperSpeedFrac(gear, prof.numGears));
+        const inGearFrac = clamp01((speedNorm - lo) / (hi - lo));
+        rpmNorm = clampRange(0.20 + inGearFrac * 0.76, 0.18, 0.96);
+      }
+
+      const baseHz =
+        (prof.baseHzAtIdle + rpmNorm * (prof.baseHzAtRedline - prof.baseHzAtIdle)) *
+        doppler *
+        hashDetune(car.id);
+
+      const lpHz = 420 + (1 - Math.min(1, dist / 90)) * 2200;
+      const pan = clampRange(
+        ((dx * screenRightX + dy * screenRightY + dz * screenRightZ) / Math.max(2.0, dist)) * 0.9,
+        -0.9,
+        0.9
+      );
+
+      this.safeSetTarget(voice.oscA.frequency, baseHz * prof.harmonics[0], now, 0.045);
+      this.safeSetTarget(voice.oscB.frequency, baseHz * prof.harmonics[1], now, 0.045);
+      this.safeSetTarget(voice.gainA.gain, prof.harmonicGains[0], now, 0.05);
+      this.safeSetTarget(voice.gainB.gain, prof.harmonicGains[1], now, 0.05);
+      this.safeSetTarget(voice.lp.frequency, lpHz, now, 0.05);
+      if (voice.panner) {
+        this.safeSetTarget(voice.panner.pan, pan, now, 0.045);
+      }
+      this.safeSetTarget(voice.outGain.gain, targetGain, now, 0.045);
+    }
+  }
+
   public silence(): void {
     if (!this.ctx || !this.isInitialized) return;
     const now = this.ctx.currentTime;
@@ -1328,6 +1546,7 @@ class CarSoundEngine {
     this.safeSetTarget(this.curbOutGain?.gain, 0, now, 0.03);
     this.safeSetTarget(this.offroadGain?.gain, 0, now, 0.03);
     this.safeSetTarget(this.tunnelOutGain?.gain, 0, now, 0.04);
+    this.silenceNearbyCars();
   }
 }
 

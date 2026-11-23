@@ -9,6 +9,7 @@ import { Car3D, CarClass } from './Car3D';
 import { publishTelemetry, TelemetryData, PitStopStatus, RaceStartPhase, registerStartCountdownHandler } from '../telemetryStore';
 import { carSoundEngine, toggleAudioMuted } from '../soundEngine';
 import type { LocalCarNetSample } from '../multiplayer/types';
+import { pollGamepadDrivingInput } from '../gamepadInput';
 import {
   OUTDOOR_CHASE_BACK,
   OUTDOOR_CHASE_HEIGHT,
@@ -176,6 +177,7 @@ interface RapierCarControllerProps {
   carTuning?: CarTuning;
   headlightsOn?: boolean;
   onToggleHeadlights?: () => void;
+  onCycleCamera?: () => void;
   environmentTheme?: 'day' | 'sunset' | 'night';
   onTelemetry?: (data: TelemetryData) => void;
   resetTrigger?: number;
@@ -213,6 +215,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
   carTuning,
   headlightsOn = true,
   onToggleHeadlights,
+  onCycleCamera,
   environmentTheme = 'day',
   onTelemetry,
   resetTrigger = 0,
@@ -250,6 +253,8 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
   headlightsOnRef.current = headlightsOn;
   const onToggleHeadlightsRef = useRef(onToggleHeadlights);
   onToggleHeadlightsRef.current = onToggleHeadlights;
+  const onCycleCameraRef = useRef(onCycleCamera);
+  onCycleCameraRef.current = onCycleCamera;
 
   const keys = useRef<{ [key: string]: boolean }>({});
   const steerRef = useRef(0);
@@ -293,6 +298,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
   const lastPublishedBrakingRef = useRef(false);
   const gpRecoverCooldownRef = useRef(0);
   const gpLightsCooldownRef = useRef(0);
+  const gpCameraCooldownRef = useRef(0);
   const gearRef = useRef(0);
   const rpmNormRef = useRef(0);
   const prevPitStatusRef = useRef<PitStopStatus>('none');
@@ -663,13 +669,24 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
   }, [spawnPose.pos[0], spawnPose.pos[1], spawnPose.pos[2]]);
 
   useEffect(() => {
+    const clearKeys = () => {
+      keys.current = {};
+    };
+    const isEditableElement = (el: EventTarget | null) => {
+      const target = el as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      return tag === 'input' || tag === 'textarea' || tag === 'select' || Boolean(target?.isContentEditable);
+    };
+    const onFocusIn = (e: FocusEvent) => {
+      if (isEditableElement(e.target)) {
+        clearKeys();
+      }
+    };
     const onPointerDown = () => {
       carSoundEngine.unlock();
     };
     const onKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      const tag = target?.tagName?.toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+      if (isEditableElement(e.target)) return;
 
       carSoundEngine.unlock();
 
@@ -704,10 +721,14 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
     const onKeyUp = (e: KeyboardEvent) => {
       keys.current[e.key.toLowerCase()] = false;
     };
+    window.addEventListener('blur', clearKeys);
+    document.addEventListener('focusin', onFocusIn);
     window.addEventListener('pointerdown', onPointerDown, { passive: true });
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
     return () => {
+      window.removeEventListener('blur', clearKeys);
+      document.removeEventListener('focusin', onFocusIn);
       window.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
@@ -904,56 +925,32 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
     tmpDown.copy(tmpUp).negate();
 
     // Inputs (Keyboard + Gamepad)
-    let gpThrottle = 0;
-    let gpBrake = 0;
-    let gpSteer = 0;
-    let gpHandbrake = false;
+    const gpInput = pollGamepadDrivingInput(nowMs);
+    if (gpInput.anyInputActive) {
+      carSoundEngine.unlock();
+    }
+    const gpThrottle = gpInput.throttle;
+    const gpBrake = gpInput.brake;
+    const gpSteer = gpInput.steer;
+    const gpHandbrake = gpInput.handbrake;
 
-    if (typeof navigator !== 'undefined' && navigator.getGamepads) {
-      const gamepads = navigator.getGamepads();
-      let gp: Gamepad | null = null;
-      if (gamepads) {
-        for (let gi = 0; gi < gamepads.length; gi++) {
-          const cand = gamepads[gi];
-          if (cand && cand.connected) {
-            gp = cand;
-            break;
-          }
-        }
+    if (gpInput.connected) {
+      if (gpInput.justToggleHeadlights && nowMs > gpLightsCooldownRef.current) {
+        gpLightsCooldownRef.current = nowMs + 300;
+        onToggleHeadlightsRef.current?.();
       }
-      if (gp) {
-        const stickX = gp.axes[0] || 0;
-        if (Math.abs(stickX) > 0.08) {
-          // Progressive non-linear curve for precise high-speed analog steering
-          const norm = (Math.abs(stickX) - 0.08) / 0.92;
-          gpSteer = -Math.sign(stickX) * Math.pow(Math.min(1, norm), 1.45);
+      if (gpInput.justCycleCamera && nowMs > gpCameraCooldownRef.current) {
+        gpCameraCooldownRef.current = nowMs + 300;
+        onCycleCameraRef.current?.();
+      }
+      if (!externalRaceControlRef.current && isRaceActiveRef.current && raceStartPhaseRef.current === 'ready') {
+        if (gpInput.anyStartPressed) {
+          beginStartCountdown();
         }
-        const btnRT = gp.buttons[7]?.value ?? (gp.buttons[7]?.pressed ? 1 : 0);
-        const btnA = gp.buttons[0]?.pressed ? 1 : 0;
-        const dpadUp = gp.buttons[12]?.pressed ? 1 : 0;
-        gpThrottle = Math.max(btnRT, btnA, dpadUp);
-
-        const btnLT = gp.buttons[6]?.value ?? (gp.buttons[6]?.pressed ? 1 : 0);
-        const btnB = gp.buttons[1]?.pressed ? 1 : 0;
-        const dpadDown = gp.buttons[13]?.pressed ? 1 : 0;
-        gpBrake = Math.max(btnLT, btnB, dpadDown);
-
-        gpHandbrake = Boolean(gp.buttons[2]?.pressed || gp.buttons[5]?.pressed);
-
-        if (gp.buttons[4]?.pressed && nowMs > gpLightsCooldownRef.current) {
-          gpLightsCooldownRef.current = nowMs + 350;
-          onToggleHeadlightsRef.current?.();
-        }
-
-        if (!externalRaceControlRef.current && isRaceActiveRef.current && raceStartPhaseRef.current === 'ready') {
-          if (gpThrottle > 0.25 || gp.buttons[0]?.pressed || gp.buttons[9]?.pressed) {
-            beginStartCountdown();
-          }
-        } else if ((gp.buttons[8]?.pressed || gp.buttons[3]?.pressed) && nowMs > gpRecoverCooldownRef.current) {
-          gpRecoverCooldownRef.current = nowMs + 500;
-          recoverCarOnTrack(35);
-          return;
-        }
+      } else if (!isHeldOnGrid && gpInput.justRecover && nowMs > gpRecoverCooldownRef.current) {
+        gpRecoverCooldownRef.current = nowMs + 500;
+        recoverCarOnTrack(35);
+        return;
       }
     }
 

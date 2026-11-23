@@ -23,7 +23,55 @@ export interface RoomPlayerInfo {
   sceneReady: boolean;
   connected: boolean;
   gridSlot: number;
+  voiceJoined?: boolean;
+  voiceMuted?: boolean;
 }
+
+export type OnlinePlayerStatus = 'home' | 'lobby' | 'in_room' | 'racing';
+
+export interface OnlinePlayerInfo {
+  id: string;
+  name: string;
+  primaryColor: string;
+  secondaryColor: string;
+  carClass: CarClass;
+  status: OnlinePlayerStatus;
+  roomCode: string | null;
+  roomName: string | null;
+  connectedAt: number;
+}
+
+export interface ChatMessage {
+  id: string;
+  scope: 'lobby' | 'room';
+  senderId: string;
+  senderName: string;
+  senderColor: string;
+  text: string;
+  timestampMs: number;
+  isSystem?: boolean;
+}
+
+export interface RoomInviteNotification {
+  fromId: string;
+  fromName: string;
+  roomCode: string;
+  roomName: string;
+  circuitName: string;
+  carCategory: CarCategory;
+  sentAtMs: number;
+}
+
+export type VoiceServerEvent =
+  | { type: 'voice_peer_joined'; peerId: string; name: string; muted: boolean }
+  | { type: 'voice_peer_left'; peerId: string }
+  | { type: 'voice_peer_muted'; peerId: string; muted: boolean }
+  | {
+      type: 'voice_signal';
+      fromId: string;
+      signalType: 'offer' | 'answer' | 'ice';
+      data: unknown;
+    };
 
 export interface AiRacerConfig {
   id: string;

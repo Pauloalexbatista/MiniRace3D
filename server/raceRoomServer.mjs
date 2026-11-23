@@ -134,6 +134,8 @@ function serializePlayer(p) {
     sceneReady: p.sceneReady,
     connected: p.connected,
     gridSlot: p.gridSlot,
+    voiceJoined: Boolean(p.voiceJoined),
+    voiceMuted: Boolean(p.voiceMuted),
   };
 }
 
@@ -276,7 +278,64 @@ export function attachRaceRoomServer(httpServer, { circuitsDir } = {}) {
 
   const wss = new WebSocketServer({ noServer: true });
   const rooms = new Map();
-  const clients = new Map(); // ws -> { id, ws, roomCode, playerId, isAlive }
+  const clients = new Map(); // ws -> { id, ws, roomCode, playerId, isAlive, ... }
+  const lobbyChatHistory = [];
+
+  const createChatEntry = (scope, senderId, senderName, senderColor, text, isSystem = false) => ({
+    id: `msg_${crypto.randomBytes(4).toString('hex')}`,
+    scope,
+    senderId,
+    senderName,
+    senderColor: sanitizeColor(senderColor, '#38bdf8'),
+    text,
+    timestampMs: Date.now(),
+    isSystem,
+  });
+
+  const getOnlinePlayers = () => {
+    const list = [];
+    for (const c of clients.values()) {
+      const room = c.roomCode ? rooms.get(c.roomCode) : null;
+      const roomPlayer = room && c.playerId ? room.players.get(c.playerId) : null;
+      let status = c.screen === 'lobby' ? 'lobby' : 'home';
+      if (room) {
+        const isRacing =
+          room.status === 'loading' || room.status === 'countdown' || room.status === 'racing';
+        status = isRacing ? 'racing' : 'in_room';
+      }
+      list.push({
+        id: c.id,
+        name: roomPlayer?.name || c.name,
+        primaryColor: roomPlayer?.primaryColor || c.primaryColor,
+        secondaryColor: roomPlayer?.secondaryColor || c.secondaryColor,
+        carClass: roomPlayer?.carClass || c.carClass,
+        status,
+        roomCode: room ? room.code : null,
+        roomName: room ? room.name : null,
+        connectedAt: c.connectedAt,
+      });
+    }
+    list.sort((a, b) => a.connectedAt - b.connectedAt);
+    return list;
+  };
+
+  const broadcastOnlinePlayers = (excludeWs = null) => {
+    const payload = { type: 'online_players', players: getOnlinePlayers() };
+    for (const c of clients.values()) {
+      if (c.ws !== excludeWs) {
+        sendJson(c.ws, payload);
+      }
+    }
+  };
+
+  const pushRoomSystemMessage = (room, text) => {
+    const entry = createChatEntry('room', 'system', 'Sistema', '#38bdf8', text, true);
+    room.chatHistory.push(entry);
+    if (room.chatHistory.length > 60) {
+      room.chatHistory.splice(0, room.chatHistory.length - 60);
+    }
+    broadcastToRoom(room, { type: 'chat_message', message: entry });
+  };
 
   const getRoomSummaries = () => {
     const list = [];
@@ -326,6 +385,10 @@ export function attachRaceRoomServer(httpServer, { circuitsDir } = {}) {
     const player = room.players.get(playerId);
     if (!player) return;
 
+    const wasVoiceJoined = Boolean(player.voiceJoined);
+    player.voiceJoined = false;
+    player.voiceMuted = false;
+
     const inActiveRace =
       room.status === 'loading' || room.status === 'countdown' || room.status === 'racing';
 
@@ -341,7 +404,16 @@ export function attachRaceRoomServer(httpServer, { circuitsDir } = {}) {
     if (connectedHumans.length === 0) {
       rooms.delete(room.code);
       broadcastRoomsListToLobby();
+      broadcastOnlinePlayers();
       return;
+    }
+
+    if (wasVoiceJoined) {
+      broadcastToRoom(room, { type: 'voice_peer_left', peerId: player.id });
+    }
+
+    if (forceRemove || !inActiveRace) {
+      pushRoomSystemMessage(room, `${player.name} saiu da sala.`);
     }
 
     if (room.hostId === playerId) {
@@ -368,6 +440,7 @@ export function attachRaceRoomServer(httpServer, { circuitsDir } = {}) {
     }
 
     broadcastRoomsListToLobby();
+    broadcastOnlinePlayers();
   };
 
   const resolveCircuit = (circuitId, clientCircuitData) => {
@@ -411,6 +484,128 @@ export function attachRaceRoomServer(httpServer, { circuitsDir } = {}) {
 
     if (msg.type === 'list_rooms') {
       sendJson(client.ws, { type: 'rooms_list', rooms: getRoomSummaries() });
+      sendJson(client.ws, { type: 'online_players', players: getOnlinePlayers() });
+      return;
+    }
+
+    if (msg.type === 'set_presence') {
+      if (msg.name !== undefined) {
+        client.name = sanitizeText(msg.name, 20, client.name);
+      }
+      if (msg.carClass !== undefined && VALID_CAR_CLASSES.includes(msg.carClass)) {
+        client.carClass = msg.carClass;
+      }
+      if (msg.primaryColor !== undefined) {
+        client.primaryColor = sanitizeColor(msg.primaryColor, client.primaryColor);
+      }
+      if (msg.secondaryColor !== undefined) {
+        client.secondaryColor = sanitizeColor(msg.secondaryColor, client.secondaryColor);
+      }
+      if (msg.screen === 'home' || msg.screen === 'lobby') {
+        client.screen = msg.screen;
+      }
+      broadcastOnlinePlayers();
+      return;
+    }
+
+    if (msg.type === 'chat_send') {
+      const text = sanitizeText(msg.text, 240, '');
+      if (!text) return;
+
+      const now = Date.now();
+      client.chatTimestamps = client.chatTimestamps.filter((ts) => now - ts < 4000);
+      if (client.chatTimestamps.length >= 6) {
+        sendJson(client.ws, {
+          type: 'error',
+          message: 'Estás a enviar mensagens demasiado depressa.',
+        });
+        return;
+      }
+      client.chatTimestamps.push(now);
+
+      const useRoomScope =
+        msg.scope === 'room' || (Boolean(client.roomCode) && msg.scope !== 'lobby');
+      if (useRoomScope) {
+        const activeRoom = client.roomCode ? rooms.get(client.roomCode) : null;
+        const activePlayer = activeRoom && client.playerId ? activeRoom.players.get(client.playerId) : null;
+        if (!activeRoom || !activePlayer) return;
+
+        const entry = createChatEntry(
+          'room',
+          activePlayer.id,
+          activePlayer.name,
+          activePlayer.primaryColor,
+          text,
+          false
+        );
+        activeRoom.chatHistory.push(entry);
+        if (activeRoom.chatHistory.length > 60) {
+          activeRoom.chatHistory.splice(0, activeRoom.chatHistory.length - 60);
+        }
+        broadcastToRoom(activeRoom, { type: 'chat_message', message: entry });
+      } else {
+        const entry = createChatEntry(
+          'lobby',
+          client.id,
+          client.name,
+          client.primaryColor,
+          text,
+          false
+        );
+        lobbyChatHistory.push(entry);
+        if (lobbyChatHistory.length > 40) {
+          lobbyChatHistory.splice(0, lobbyChatHistory.length - 40);
+        }
+        for (const c of clients.values()) {
+          if (!c.roomCode) {
+            sendJson(c.ws, { type: 'chat_message', message: entry });
+          }
+        }
+      }
+      return;
+    }
+
+    if (msg.type === 'invite_player') {
+      const activeRoom = client.roomCode ? rooms.get(client.roomCode) : null;
+      const activePlayer = activeRoom && client.playerId ? activeRoom.players.get(client.playerId) : null;
+      if (!activeRoom || !activePlayer) return;
+      if (activeRoom.status !== 'lobby') {
+        sendJson(client.ws, {
+          type: 'error',
+          message: 'Só podes enviar convites enquanto a sala está na garagem.',
+        });
+        return;
+      }
+      const targetId = typeof msg.targetClientId === 'string' ? msg.targetClientId : '';
+      if (!targetId) return;
+      let targetClient = null;
+      for (const c of clients.values()) {
+        if (c.id === targetId) {
+          targetClient = c;
+          break;
+        }
+      }
+      if (!targetClient || targetClient.roomCode === activeRoom.code) return;
+
+      const now = Date.now();
+      const lastInviteMs = client.inviteTimestamps.get(targetClient.id) || 0;
+      if (now - lastInviteMs < 5000) return;
+      client.inviteTimestamps.set(targetClient.id, now);
+
+      sendJson(targetClient.ws, {
+        type: 'room_invite',
+        fromId: client.id,
+        fromName: activePlayer.name,
+        roomCode: activeRoom.code,
+        roomName: activeRoom.name,
+        circuitName: activeRoom.circuitName,
+        carCategory: activeRoom.carCategory,
+        sentAtMs: now,
+      });
+      sendJson(client.ws, {
+        type: 'invite_sent',
+        targetName: targetClient.name,
+      });
       return;
     }
 
@@ -443,7 +638,7 @@ export function attachRaceRoomServer(httpServer, { circuitsDir } = {}) {
 
       const hostPlayer = {
         id: hostId,
-        name: sanitizeText(hostProfile.name, 20, 'Piloto 1'),
+        name: sanitizeText(hostProfile.name, 20, client.name || 'Piloto 1'),
         carClass: hostCarClass,
         primaryColor: sanitizeColor(hostProfile.primaryColor, '#e11d48'),
         secondaryColor: sanitizeColor(hostProfile.secondaryColor, '#f8fafc'),
@@ -452,6 +647,8 @@ export function attachRaceRoomServer(httpServer, { circuitsDir } = {}) {
         connected: true,
         disconnectedAt: null,
         gridSlot: 0,
+        voiceJoined: false,
+        voiceMuted: false,
         ws: client.ws,
         lastState: null,
         lapNumber: 1,
@@ -487,6 +684,7 @@ export function attachRaceRoomServer(httpServer, { circuitsDir } = {}) {
         maxHumans: 6,
         status: 'lobby',
         players: new Map([[hostId, hostPlayer]]),
+        chatHistory: [],
         aiRacers: [],
         aiStates: new Map(),
         aiMeta: new Map(),
@@ -501,13 +699,19 @@ export function attachRaceRoomServer(httpServer, { circuitsDir } = {}) {
       rooms.set(code, room);
       client.roomCode = code;
       client.playerId = hostId;
+      client.name = hostPlayer.name;
+      client.carClass = hostPlayer.carClass;
+      client.primaryColor = hostPlayer.primaryColor;
+      client.secondaryColor = hostPlayer.secondaryColor;
 
       sendJson(client.ws, {
         type: 'room_joined',
         selfId: hostId,
         room: serializeRoom(room),
+        chatHistory: room.chatHistory,
       });
       broadcastRoomsListToLobby();
+      broadcastOnlinePlayers();
       return;
     }
 
@@ -544,6 +748,7 @@ export function attachRaceRoomServer(httpServer, { circuitsDir } = {}) {
             type: 'room_joined',
             selfId: existing.id,
             room: serializeRoom(room),
+            chatHistory: room.chatHistory,
           });
           if (room.status === 'loading' || room.status === 'countdown' || room.status === 'racing') {
             sendJson(client.ws, {
@@ -563,6 +768,7 @@ export function attachRaceRoomServer(httpServer, { circuitsDir } = {}) {
           }
           broadcastToRoom(room, { type: 'room_updated', room: serializeRoom(room) });
           broadcastRoomsListToLobby();
+          broadcastOnlinePlayers();
           return;
         }
       }
@@ -588,7 +794,7 @@ export function attachRaceRoomServer(httpServer, { circuitsDir } = {}) {
       const playerId = client.id;
       const newPlayer = {
         id: playerId,
-        name: sanitizeText(prof.name, 20, `Piloto ${room.players.size + 1}`),
+        name: sanitizeText(prof.name, 20, client.name || `Piloto ${room.players.size + 1}`),
         carClass: enforceCarClassForRoom(room, prof.carClass),
         primaryColor: sanitizeColor(prof.primaryColor, '#2563eb'),
         secondaryColor: sanitizeColor(prof.secondaryColor, '#f8fafc'),
@@ -597,6 +803,8 @@ export function attachRaceRoomServer(httpServer, { circuitsDir } = {}) {
         connected: true,
         disconnectedAt: null,
         gridSlot: room.players.size,
+        voiceJoined: false,
+        voiceMuted: false,
         ws: client.ws,
         lastState: null,
         lapNumber: 1,
@@ -616,14 +824,21 @@ export function attachRaceRoomServer(httpServer, { circuitsDir } = {}) {
       room.players.set(playerId, newPlayer);
       client.roomCode = room.code;
       client.playerId = playerId;
+      client.name = newPlayer.name;
+      client.carClass = newPlayer.carClass;
+      client.primaryColor = newPlayer.primaryColor;
+      client.secondaryColor = newPlayer.secondaryColor;
 
       sendJson(client.ws, {
         type: 'room_joined',
         selfId: playerId,
         room: serializeRoom(room),
+        chatHistory: room.chatHistory,
       });
       broadcastToRoom(room, { type: 'room_updated', room: serializeRoom(room) }, client.ws);
+      pushRoomSystemMessage(room, `${newPlayer.name} entrou na sala.`);
       broadcastRoomsListToLobby();
+      broadcastOnlinePlayers();
       return;
     }
 
@@ -637,6 +852,8 @@ export function attachRaceRoomServer(httpServer, { circuitsDir } = {}) {
       }
       sendJson(client.ws, { type: 'left_room' });
       sendJson(client.ws, { type: 'rooms_list', rooms: getRoomSummaries() });
+      sendJson(client.ws, { type: 'online_players', players: getOnlinePlayers() });
+      broadcastOnlinePlayers();
       return;
     }
 
@@ -660,8 +877,13 @@ export function attachRaceRoomServer(httpServer, { circuitsDir } = {}) {
       if (prof.secondaryColor !== undefined) {
         player.secondaryColor = sanitizeColor(prof.secondaryColor, player.secondaryColor);
       }
+      client.name = player.name;
+      client.carClass = player.carClass;
+      client.primaryColor = player.primaryColor;
+      client.secondaryColor = player.secondaryColor;
       broadcastToRoom(room, { type: 'room_updated', room: serializeRoom(room) });
       broadcastRoomsListToLobby();
+      broadcastOnlinePlayers();
       return;
     }
 
@@ -740,6 +962,7 @@ export function attachRaceRoomServer(httpServer, { circuitsDir } = {}) {
         aiRacers: targetRoom.aiRacers,
       });
       broadcastRoomsListToLobby();
+      broadcastOnlinePlayers();
       return true;
     };
 
@@ -988,6 +1211,62 @@ export function attachRaceRoomServer(httpServer, { circuitsDir } = {}) {
         room: serializeRoom(room),
       });
       broadcastRoomsListToLobby();
+      broadcastOnlinePlayers();
+      return;
+    }
+
+    if (msg.type === 'voice_join') {
+      player.voiceJoined = true;
+      player.voiceMuted = Boolean(msg.muted);
+      broadcastToRoom(room, { type: 'room_updated', room: serializeRoom(room) });
+      broadcastToRoom(
+        room,
+        {
+          type: 'voice_peer_joined',
+          peerId: player.id,
+          name: player.name,
+          muted: player.voiceMuted,
+        },
+        client.ws
+      );
+      return;
+    }
+
+    if (msg.type === 'voice_leave') {
+      player.voiceJoined = false;
+      player.voiceMuted = false;
+      broadcastToRoom(room, { type: 'room_updated', room: serializeRoom(room) });
+      broadcastToRoom(
+        room,
+        { type: 'voice_peer_left', peerId: player.id },
+        client.ws
+      );
+      return;
+    }
+
+    if (msg.type === 'voice_mute') {
+      player.voiceMuted = Boolean(msg.muted);
+      broadcastToRoom(room, { type: 'room_updated', room: serializeRoom(room) });
+      broadcastToRoom(
+        room,
+        { type: 'voice_peer_muted', peerId: player.id, muted: player.voiceMuted },
+        client.ws
+      );
+      return;
+    }
+
+    if (msg.type === 'voice_signal') {
+      if (!player.voiceJoined) return;
+      if (!['offer', 'answer', 'ice'].includes(msg.signalType)) return;
+      const targetId = typeof msg.targetId === 'string' ? msg.targetId : '';
+      const target = targetId ? room.players.get(targetId) : null;
+      if (!target || !target.connected || !target.ws || !target.voiceJoined) return;
+      sendJson(target.ws, {
+        type: 'voice_signal',
+        fromId: player.id,
+        signalType: msg.signalType,
+        data: msg.data,
+      });
     }
   };
 
@@ -999,6 +1278,14 @@ export function attachRaceRoomServer(httpServer, { circuitsDir } = {}) {
       roomCode: null,
       playerId: null,
       isAlive: true,
+      name: `Piloto ${crypto.randomInt(10, 99)}`,
+      carClass: 'f1',
+      primaryColor: '#e11d48',
+      secondaryColor: '#f8fafc',
+      screen: 'home',
+      connectedAt: Date.now(),
+      chatTimestamps: [],
+      inviteTimestamps: new Map(),
     };
     clients.set(ws, client);
 
@@ -1007,7 +1294,10 @@ export function attachRaceRoomServer(httpServer, { circuitsDir } = {}) {
       clientId,
       serverTimeMs: Date.now(),
       rooms: getRoomSummaries(),
+      onlinePlayers: getOnlinePlayers(),
+      lobbyChatHistory,
     });
+    broadcastOnlinePlayers(ws);
 
     ws.on('pong', () => {
       client.isAlive = true;
@@ -1022,6 +1312,8 @@ export function attachRaceRoomServer(httpServer, { circuitsDir } = {}) {
       if (client.roomCode && rooms.has(client.roomCode)) {
         const room = rooms.get(client.roomCode);
         removeOrDisconnectPlayer(room, client.playerId, false);
+      } else {
+        broadcastOnlinePlayers();
       }
     });
 
@@ -1065,6 +1357,7 @@ export function attachRaceRoomServer(httpServer, { circuitsDir } = {}) {
           finishedAtMs: now,
         });
         broadcastRoomsListToLobby();
+        broadcastOnlinePlayers();
         continue;
       }
 

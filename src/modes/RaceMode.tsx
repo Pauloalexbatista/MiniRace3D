@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { Physics, RigidBody, CuboidCollider } from '@react-three/rapier';
@@ -10,12 +10,18 @@ import {
   Crown,
   Eye,
   Flag,
+  Gamepad2,
+  Headphones,
   Home,
   Lightbulb,
   LogOut,
+  MessageSquare,
+  Mic,
+  MicOff,
   Play,
   RefreshCw,
   RotateCcw,
+  UserPlus,
   Users,
   Wifi,
   WifiOff,
@@ -31,12 +37,22 @@ import { PodiumOverlay } from '../components/PodiumOverlay';
 import { RaceMinimap, MinimapDriverDot } from '../components/RaceMinimap';
 import { RemoteCar3D } from '../components/RemoteCar3D';
 import { AIRacerManager } from '../components/AIRacerManager';
+import { GamepadSettingsModal } from '../components/GamepadSettingsModal';
+import { LobbyChatBox, RoomCommsPanel } from '../components/RoomCommsPanel';
+import { InRaceCommsOverlay } from '../components/InRaceCommsOverlay';
 import {
   CAR_CLASS_DEFAULTS,
   CarTuning,
   RapierCarController,
 } from '../components/RapierCarController';
 import { CarGaragePanel, clampTuningToClass } from '../components/CarGaragePanel';
+import { getGamepadStatus, subscribeGamepadStatus } from '../gamepadInput';
+import { useRoomVoice } from '../multiplayer/useRoomVoice';
+import {
+  carSoundEngine,
+  ListenerAudioPose,
+  NearbyCarAudioSample,
+} from '../soundEngine';
 import {
   computeGridSlotPose,
   computeSpline,
@@ -58,6 +74,7 @@ import {
   LocalCarNetSample,
   NetCarState,
   RaceStandingEntry,
+  RoomPlayerInfo,
   SpeedPreset,
 } from '../multiplayer/types';
 import type { useRaceClient } from '../multiplayer/useRaceClient';
@@ -68,6 +85,7 @@ const SAVED_CIRCUITS_STORAGE_KEY = 'minirace3d_saved_circuits';
 const VALID_CAR_CLASSES: CarClass[] = ['f1', 'gt', 'rally', 'drift'];
 const EMPTY_PATCHES: SceneryPatch[] = [];
 const EMPTY_BRANCHES: RoadBranch[] = [];
+const EMPTY_ROOM_PLAYERS: RoomPlayerInfo[] = [];
 const PHYSICS_GRAVITY: [number, number, number] = [0, -24, 0];
 const SAFETY_FLOOR_ARGS: [number, number, number] = [10000, 1, 10000];
 
@@ -254,7 +272,14 @@ export const RaceMode: React.FC<RaceModeProps> = ({
   onBackToHome,
   onGoToEditor,
 }) => {
-  const { joinRoom, sendSceneReady, sendCarState, sendAiStates } = raceClient;
+  const { joinRoom, sendSceneReady, sendCarState, sendAiStates, updatePresence } = raceClient;
+  const gamepadStatus = useSyncExternalStore(subscribeGamepadStatus, getGamepadStatus);
+  const [gamepadModalOpen, setGamepadModalOpen] = useState<boolean>(false);
+  const [inRaceChatOpen, setInRaceChatOpen] = useState<boolean>(false);
+  const [unreadRoomMsgs, setUnreadRoomMsgs] = useState<number>(0);
+  const prevRoomMsgCountRef = useRef<number>(0);
+  const hasGamepad = Boolean(gamepadStatus.activePad);
+
   const [circuits, setCircuits] = useState<CircuitOption[]>([]);
   const [driverProfile, setDriverProfile] = useState<DriverProfile>(loadInitialProfile);
   const [raceTunings, setRaceTunings] = useState<Record<CarClass, CarTuning>>(() =>
@@ -313,6 +338,20 @@ export const RaceMode: React.FC<RaceModeProps> = ({
       // Ignore storage write errors
     }
   }, [driverProfile]);
+
+  // Sync live player presence (name, car, colors) to the server lobby
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      updatePresence({
+        name: driverProfile.name,
+        carClass: driverProfile.carClass,
+        primaryColor: driverProfile.primaryColor,
+        secondaryColor: driverProfile.secondaryColor,
+        screen: 'lobby',
+      });
+    }, 220);
+    return () => window.clearTimeout(timer);
+  }, [driverProfile, updatePresence]);
 
   useEffect(() => {
     try {
@@ -408,6 +447,34 @@ export const RaceMode: React.FC<RaceModeProps> = ({
   const isSoloRacing = Boolean(soloSession && soloSession.status !== 'garage');
   const isSoloGarage = Boolean(soloSession && soloSession.status === 'garage');
   const isActiveRace = isOnlineRacing || isSoloRacing;
+
+  const roomVoice = useRoomVoice({
+    raceClient,
+    roomCode: currentRoom?.code ?? null,
+    selfId: raceClient.selfId,
+    players: currentRoom?.players ?? EMPTY_ROOM_PLAYERS,
+  });
+
+  useEffect(() => {
+    if (!isOnlineRacing) {
+      setInRaceChatOpen(false);
+      setUnreadRoomMsgs(0);
+    }
+  }, [isOnlineRacing]);
+
+  useEffect(() => {
+    const count = raceClient.roomMessages.length;
+    if (isOnlineRacing && !inRaceChatOpen && count > prevRoomMsgCountRef.current) {
+      setUnreadRoomMsgs((prev) => prev + (count - prevRoomMsgCountRef.current));
+    }
+    prevRoomMsgCountRef.current = count;
+  }, [raceClient.roomMessages.length, isOnlineRacing, inRaceChatOpen]);
+
+  useEffect(() => {
+    if (inRaceChatOpen) {
+      setUnreadRoomMsgs(0);
+    }
+  }, [inRaceChatOpen]);
 
   const isHost = Boolean(currentRoom && raceClient.selfId && currentRoom.hostId === raceClient.selfId);
   const myDriverId = isSoloRacing
@@ -577,25 +644,33 @@ export const RaceMode: React.FC<RaceModeProps> = ({
     return () => window.cancelAnimationFrame(rafId);
   }, [isActiveRace, activeSync, isRaceFinished]);
 
-  // Key 'C' camera switch & Key 'L' headlights toggle in Race Mode
+  // Key 'C' camera switch, Key 'L' headlights toggle, Key 'T' in-race chat toggle
   const handleToggleHeadlights = useCallback(() => setHeadlightsOn((prev) => !prev), []);
+  const handleCycleCamera = useCallback(
+    () => setCameraMode((prev) => (prev === 'chase' ? 'cockpit' : prev === 'cockpit' ? 'orbit' : 'chase')),
+    []
+  );
   const handleNoopSpeedPreset = useCallback(() => {}, []);
   const handleRecoverCar = useCallback(() => setRecoverTrigger((prev) => prev + 1), []);
 
   useEffect(() => {
     if (!isActiveRace) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement | null)?.tagName?.toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || target?.isContentEditable) return;
       if (e.code === 'KeyC' && !e.repeat) {
-        setCameraMode((prev) => (prev === 'chase' ? 'cockpit' : prev === 'cockpit' ? 'orbit' : 'chase'));
+        handleCycleCamera();
       } else if (e.code === 'KeyL' && !e.repeat) {
         setHeadlightsOn((prev) => !prev);
+      } else if (isOnlineRacing && e.code === 'KeyT' && !e.repeat) {
+        e.preventDefault();
+        setInRaceChatOpen((prev) => !prev);
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [isActiveRace]);
+  }, [isActiveRace, isOnlineRacing, handleCycleCamera]);
 
   const handleSceneReady = useCallback(() => {
     if (isSoloRacing) {
@@ -815,6 +890,7 @@ export const RaceMode: React.FC<RaceModeProps> = ({
     const timer = window.setInterval(() => {
       const rankMap = standingsRankMapRef.current;
       const dots: MinimapDriverDot[] = [];
+      const nearbyCars: NearbyCarAudioSample[] = [];
       const localS = localCarSampleRef.current;
       const myFallback = cachedGridPoses[Math.max(0, Math.min(11, myGridSlot))] ?? cachedGridPoses[0];
 
@@ -846,6 +922,19 @@ export const RaceMode: React.FC<RaceModeProps> = ({
             finished: Boolean(remote?.finished),
             position: rankMap[p.id] || p.gridSlot + 1,
           });
+          if (p.connected && remote) {
+            nearbyCars.push({
+              id: p.id,
+              carClass: p.carClass,
+              x: remote.x,
+              y: remote.y,
+              z: remote.z,
+              vx: remote.vx,
+              vy: remote.vy,
+              vz: remote.vz,
+              speedKmh: remote.speedKmh,
+            });
+          }
         }
       }
 
@@ -868,12 +957,46 @@ export const RaceMode: React.FC<RaceModeProps> = ({
           finished: Boolean(st?.finished),
           position: rankMap[bot.id] || bot.gridSlot + 1,
         });
+        if (st) {
+          nearbyCars.push({
+            id: bot.id,
+            carClass: bot.carClass,
+            x: st.x,
+            y: st.y,
+            z: st.z,
+            vx: st.vx,
+            vy: st.vy,
+            vz: st.vz,
+            speedKmh: st.speedKmh,
+          });
+        }
       }
 
       minimapDotsRef.current = dots;
+
+      if (localS) {
+        const listenerPose: ListenerAudioPose = {
+          x: localS.x,
+          y: localS.y,
+          z: localS.z,
+          vx: localS.vx,
+          vy: localS.vy,
+          vz: localS.vz,
+          qx: localS.qx,
+          qy: localS.qy,
+          qz: localS.qz,
+          qw: localS.qw,
+        };
+        carSoundEngine.updateNearbyCars(true, listenerPose, nearbyCars);
+      } else {
+        carSoundEngine.silenceNearbyCars();
+      }
     }, 60);
 
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      carSoundEngine.silenceNearbyCars();
+    };
   }, [
     isActiveRace,
     isOnlineRacing,
@@ -976,6 +1099,112 @@ export const RaceMode: React.FC<RaceModeProps> = ({
       raceClient.leaveRoom();
     }
   };
+
+  const gamepadTriggerButton = (
+    <button
+      type="button"
+      onClick={() => setGamepadModalOpen(true)}
+      title="Testar e configurar comando / volante"
+      style={{
+        background: hasGamepad ? 'rgba(16, 185, 129, 0.16)' : 'rgba(30, 41, 59, 0.88)',
+        border: hasGamepad ? '1px solid rgba(52, 211, 153, 0.45)' : '1px solid rgba(255,255,255,0.16)',
+        color: hasGamepad ? '#34d399' : '#cbd5e1',
+        borderRadius: 9,
+        padding: '6px 10px',
+        fontSize: 11.5,
+        fontWeight: 800,
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+      }}
+    >
+      <Gamepad2 size={14} />
+      <span>{hasGamepad ? 'Comando ON' : 'Comando'}</span>
+    </button>
+  );
+
+  const pendingInviteBanner = raceClient.pendingInvite ? (
+    <div
+      style={{
+        maxWidth: 1240,
+        margin: '16px auto 0',
+        padding: '0 20px',
+      }}
+    >
+      <div
+        style={{
+          background: 'linear-gradient(135deg, rgba(2, 132, 199, 0.22), rgba(16, 185, 129, 0.16))',
+          border: '1.5px solid #38bdf8',
+          borderRadius: 14,
+          padding: '12px 18px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: 12,
+          boxShadow: '0 10px 30px rgba(2, 132, 199, 0.25)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 20 }}>📩</span>
+          <div>
+            <div style={{ fontSize: 13.5, fontWeight: 900, color: '#fff' }}>
+              {raceClient.pendingInvite.fromName} convidou-te para correr em{' '}
+              <span style={{ color: '#38bdf8' }}>{raceClient.pendingInvite.roomName}</span>!
+            </div>
+            <div style={{ fontSize: 11.5, color: '#cbd5e1', fontWeight: 700, marginTop: 2 }}>
+              🏁 {raceClient.pendingInvite.circuitName} • Sala #{raceClient.pendingInvite.roomCode}
+            </div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button
+            type="button"
+            onClick={() => {
+              const code = raceClient.pendingInvite?.roomCode;
+              if (!code) return;
+              if (soloSession) {
+                setSoloSession(null);
+                setSoloFinished(false);
+                setSoloCountdownSync(null);
+                setSoloStandings([]);
+              }
+              raceClient.joinRoom(code, driverProfile);
+            }}
+            style={{
+              background: 'linear-gradient(135deg, #10b981, #059669)',
+              color: '#fff',
+              border: '1px solid #34d399',
+              borderRadius: 9,
+              padding: '8px 15px',
+              fontSize: 12.5,
+              fontWeight: 900,
+              cursor: 'pointer',
+            }}
+          >
+            Entrar Agora
+          </button>
+          <button
+            type="button"
+            onClick={raceClient.dismissInvite}
+            style={{
+              background: '#1e293b',
+              color: '#cbd5e1',
+              border: '1px solid #334155',
+              borderRadius: 9,
+              padding: '8px 12px',
+              fontSize: 12,
+              fontWeight: 800,
+              cursor: 'pointer',
+            }}
+          >
+            Ignorar
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
 
   // ============================================================================
   // VIEW 3: ACTIVE 3D RACE (ONLINE MULTIPLAYER OR SOLO)
@@ -1186,8 +1415,115 @@ export const RaceMode: React.FC<RaceModeProps> = ({
             </button>
           </div>
 
-          {/* Right: Live Racers + Ping */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {/* Right: Voice, Chat, Gamepad, Live Racers + Ping */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {!isSoloRacing && currentRoom && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!roomVoice.joined) {
+                      roomVoice.joinVoice({ listenOnly: false });
+                    } else if (!roomVoice.listenOnly) {
+                      roomVoice.toggleMute();
+                    } else {
+                      roomVoice.leaveVoice();
+                    }
+                  }}
+                  title={
+                    !roomVoice.joined
+                      ? 'Ligar chat de voz (microfone + auscultadores)'
+                      : roomVoice.listenOnly
+                      ? 'Em modo Só Ouvir (clica para sair)'
+                      : roomVoice.isMuted
+                      ? 'Ligar microfone (Tecla V)'
+                      : 'Silenciar microfone (Tecla V)'
+                  }
+                  style={{
+                    background: !roomVoice.joined
+                      ? 'rgba(30, 41, 59, 0.9)'
+                      : roomVoice.isMuted || roomVoice.listenOnly
+                      ? 'rgba(245, 158, 11, 0.18)'
+                      : 'rgba(16, 185, 129, 0.2)',
+                    border: !roomVoice.joined
+                      ? '1px solid rgba(255,255,255,0.16)'
+                      : roomVoice.isMuted || roomVoice.listenOnly
+                      ? '1px solid rgba(251, 191, 36, 0.45)'
+                      : '1px solid rgba(52, 211, 153, 0.5)',
+                    color: !roomVoice.joined
+                      ? '#e2e8f0'
+                      : roomVoice.isMuted || roomVoice.listenOnly
+                      ? '#fde68a'
+                      : '#6ee7b7',
+                    borderRadius: 9,
+                    padding: '6px 10px',
+                    fontSize: 11.5,
+                    fontWeight: 800,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 5,
+                  }}
+                >
+                  {!roomVoice.joined ? (
+                    <Headphones size={14} />
+                  ) : roomVoice.isMuted || roomVoice.listenOnly ? (
+                    <MicOff size={14} />
+                  ) : (
+                    <Mic size={14} />
+                  )}
+                  <span>
+                    {!roomVoice.joined
+                      ? 'Ligar Voz'
+                      : roomVoice.listenOnly
+                      ? 'Só Ouvir'
+                      : roomVoice.isMuted
+                      ? 'Mic OFF'
+                      : 'Voz ON'}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setInRaceChatOpen((prev) => !prev)}
+                  title="Abrir/Fechar chat da sala (Tecla T)"
+                  style={{
+                    position: 'relative',
+                    background: inRaceChatOpen ? 'rgba(56, 189, 248, 0.24)' : 'rgba(30, 41, 59, 0.9)',
+                    border: inRaceChatOpen ? '1px solid #38bdf8' : '1px solid rgba(255,255,255,0.16)',
+                    color: inRaceChatOpen ? '#fff' : '#e2e8f0',
+                    borderRadius: 9,
+                    padding: '6px 10px',
+                    fontSize: 11.5,
+                    fontWeight: 800,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 5,
+                  }}
+                >
+                  <MessageSquare size={14} />
+                  <span>Chat (T)</span>
+                  {unreadRoomMsgs > 0 && (
+                    <span
+                      style={{
+                        background: '#e11d48',
+                        color: '#fff',
+                        fontSize: 9.5,
+                        fontWeight: 900,
+                        padding: '1px 5px',
+                        borderRadius: 999,
+                      }}
+                    >
+                      {unreadRoomMsgs}
+                    </span>
+                  )}
+                </button>
+              </>
+            )}
+
+            {gamepadTriggerButton}
+
             <div style={{
               background: 'rgba(16, 185, 129, 0.16)',
               border: '1px solid rgba(52, 211, 153, 0.4)',
@@ -1259,6 +1595,7 @@ export const RaceMode: React.FC<RaceModeProps> = ({
                 carTuning={myCarTuning}
                 headlightsOn={headlightsOn}
                 onToggleHeadlights={handleToggleHeadlights}
+                onCycleCamera={handleCycleCamera}
                 environmentTheme={activeEnvTheme}
                 recoverTrigger={recoverTrigger}
                 gridSlotIndex={myGridSlot}
@@ -1404,6 +1741,21 @@ export const RaceMode: React.FC<RaceModeProps> = ({
             onLeaveRoom={handleLeaveActiveRace}
           />
         )}
+
+        {/* In-Race Text & Voice Comms Overlay */}
+        {!isSoloRacing && currentRoom && (
+          <InRaceCommsOverlay
+            players={currentRoom.players}
+            selfId={raceClient.selfId}
+            messages={raceClient.roomMessages}
+            chatOpen={inRaceChatOpen}
+            onCloseChat={() => setInRaceChatOpen(false)}
+            onSendMessage={(text) => raceClient.sendChatMessage('room', text)}
+            voice={roomVoice}
+          />
+        )}
+
+        <GamepadSettingsModal open={gamepadModalOpen} onClose={() => setGamepadModalOpen(false)} />
       </div>
     );
   }
@@ -1476,6 +1828,15 @@ export const RaceMode: React.FC<RaceModeProps> = ({
 
     const previewTotalGrid = Math.min(12, connectedHumans.length + lobbyAiCount);
     const previewAiSlots = Math.max(0, previewTotalGrid - connectedHumans.length);
+    const invitablePlayers =
+      !isSoloLobbyView && currentRoom
+        ? raceClient.onlinePlayers.filter(
+            (p) =>
+              p.id !== raceClient.selfClientId &&
+              p.roomCode !== currentRoom.code &&
+              p.status !== 'racing'
+          )
+        : [];
 
     return (
       <div style={{
@@ -1488,7 +1849,7 @@ export const RaceMode: React.FC<RaceModeProps> = ({
         fontFamily: 'system-ui, -apple-system, sans-serif',
         paddingBottom: 40,
       }}>
-        {(toastMsg || raceClient.errorMsg || raceClient.hostNotice) && (
+        {(toastMsg || raceClient.errorMsg || raceClient.hostNotice || raceClient.inviteNotice) && (
           <div style={{
             position: 'fixed',
             top: 66,
@@ -1507,7 +1868,7 @@ export const RaceMode: React.FC<RaceModeProps> = ({
             alignItems: 'center',
             gap: 10,
           }}>
-            <span>{raceClient.errorMsg || toastMsg || raceClient.hostNotice}</span>
+            <span>{raceClient.errorMsg || toastMsg || raceClient.hostNotice || raceClient.inviteNotice}</span>
             {raceClient.errorMsg && (
               <button
                 onClick={raceClient.clearError}
@@ -1562,6 +1923,7 @@ export const RaceMode: React.FC<RaceModeProps> = ({
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {gamepadTriggerButton}
             {isSoloLobbyView ? (
               <span style={{
                 background: 'rgba(16, 185, 129, 0.16)',
@@ -1614,14 +1976,18 @@ export const RaceMode: React.FC<RaceModeProps> = ({
           </div>
         </header>
 
-        {/* 2-Column Pre-Race Grid */}
+        {isSoloLobbyView && pendingInviteBanner}
+
+        {/* 2 or 3-Column Pre-Race Grid */}
         <div style={{
-          maxWidth: 1120,
+          maxWidth: isSoloLobbyView ? 1120 : 1380,
           margin: '20px auto 0',
           padding: '0 20px',
           boxSizing: 'border-box',
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))',
+          gridTemplateColumns: isSoloLobbyView
+            ? 'repeat(auto-fit, minmax(380px, 1fr))'
+            : 'repeat(auto-fit, minmax(320px, 1fr))',
           gap: 20,
           alignItems: 'start',
         }}>
@@ -1794,6 +2160,7 @@ export const RaceMode: React.FC<RaceModeProps> = ({
                   {connectedHumans.map((p, idx) => {
                     const isMe = isSoloLobbyView || p.id === raceClient.selfId;
                     const pHost = !isSoloLobbyView && currentRoom ? p.id === currentRoom.hostId : true;
+                    const isSpeaking = !isSoloLobbyView && Boolean(roomVoice.speakingPeers[p.id]);
                     return (
                       <div
                         key={p.id}
@@ -1823,6 +2190,26 @@ export const RaceMode: React.FC<RaceModeProps> = ({
                               <span>{p.name}</span>
                               {pHost && <Crown size={12} color="#facc15" />}
                               {isMe && <span style={{ fontSize: 9, background: '#38bdf8', color: '#020617', padding: '1px 5px', borderRadius: 4, fontWeight: 900 }}>TU</span>}
+                              {!isSoloLobbyView && p.voiceJoined && (
+                                <span
+                                  title={p.voiceMuted ? 'Na voz (microfone silenciado)' : 'Na chamada de voz'}
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    padding: '1px 5px',
+                                    borderRadius: 999,
+                                    background: isSpeaking
+                                      ? 'rgba(16, 185, 129, 0.28)'
+                                      : p.voiceMuted
+                                      ? 'rgba(239, 68, 68, 0.16)'
+                                      : 'rgba(52, 211, 153, 0.15)',
+                                    border: isSpeaking ? '1px solid #34d399' : '1px solid transparent',
+                                    color: p.voiceMuted ? '#fca5a5' : '#34d399',
+                                  }}
+                                >
+                                  {p.voiceMuted ? <MicOff size={10} /> : <Mic size={10} />}
+                                </span>
+                              )}
                             </div>
                             <div style={{ fontSize: 10.5, color: '#94a3b8', fontWeight: 700 }}>
                               {CAR_CATEGORY_META[p.carClass]?.emoji} {CAR_CATEGORY_META[p.carClass]?.shortLabel}
@@ -1981,9 +2368,87 @@ export const RaceMode: React.FC<RaceModeProps> = ({
                   </>
                 )}
               </div>
+
+              {/* Quick Invite Online Players */}
+              {!isSoloLobbyView && currentRoom && invitablePlayers.length > 0 && (
+                <div
+                  style={{
+                    background: '#090d16',
+                    border: '1px solid #1e293b',
+                    borderRadius: 11,
+                    padding: '10px 12px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 8,
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, fontWeight: 900, color: '#cbd5e1' }}>
+                    <UserPlus size={14} color="#38bdf8" />
+                    <span>Convidar pilotos no Lobby ({invitablePlayers.length})</span>
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {invitablePlayers.map((op) => (
+                      <div
+                        key={op.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          background: '#0f172a',
+                          border: '1px solid #334155',
+                          borderRadius: 999,
+                          padding: '4px 6px 4px 9px',
+                          fontSize: 11,
+                          fontWeight: 800,
+                        }}
+                      >
+                        <span
+                          style={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: '50%',
+                            background: op.primaryColor,
+                          }}
+                        />
+                        <span>{op.name}</span>
+                        <button
+                          type="button"
+                          onClick={() => raceClient.inviteOnlinePlayer(op.id)}
+                          style={{
+                            background: '#0284c7',
+                            color: '#fff',
+                            border: 'none',
+                            borderRadius: 999,
+                            padding: '2px 8px',
+                            fontSize: 10,
+                            fontWeight: 900,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Convidar
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
+
+          {/* Third Column: Room Voice & Text Chat (Online Rooms) */}
+          {!isSoloLobbyView && currentRoom && (
+            <RoomCommsPanel
+              players={currentRoom.players}
+              selfId={raceClient.selfId}
+              messages={raceClient.roomMessages}
+              isOnline={raceClient.connectionState === 'connected'}
+              onSendMessage={(text) => raceClient.sendChatMessage('room', text)}
+              voice={roomVoice}
+            />
+          )}
         </div>
+
+        <GamepadSettingsModal open={gamepadModalOpen} onClose={() => setGamepadModalOpen(false)} />
       </div>
     );
   }
@@ -2116,6 +2581,8 @@ export const RaceMode: React.FC<RaceModeProps> = ({
             />
           </div>
 
+          {gamepadTriggerButton}
+
           <div style={{
             display: 'flex',
             alignItems: 'center',
@@ -2133,6 +2600,8 @@ export const RaceMode: React.FC<RaceModeProps> = ({
           </div>
         </div>
       </header>
+
+      {pendingInviteBanner}
 
       {/* Main Two-Column Lobby */}
       <div style={{
@@ -2224,22 +2693,22 @@ export const RaceMode: React.FC<RaceModeProps> = ({
           </div>
 
           {/* Room List */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 520, overflowY: 'auto' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 240, overflowY: 'auto' }}>
             {raceClient.rooms.length === 0 ? (
               <div style={{
-                padding: '38px 18px',
+                padding: '20px 14px',
                 textAlign: 'center',
                 background: '#090d16',
                 borderRadius: 14,
                 border: '1px dashed #334155',
                 color: '#94a3b8',
               }}>
-                <Users size={28} style={{ opacity: 0.5, marginBottom: 8 }} />
-                <div style={{ fontSize: 14, fontWeight: 800, color: '#e2e8f0' }}>
+                <Users size={24} style={{ opacity: 0.5, marginBottom: 6 }} />
+                <div style={{ fontSize: 13.5, fontWeight: 800, color: '#e2e8f0' }}>
                   Nenhuma sala online aberta neste momento
                 </div>
-                <div style={{ fontSize: 12, marginTop: 4 }}>
-                  Cria uma corrida ao lado e partilha o código ou link com até 5 amigos!
+                <div style={{ fontSize: 11.5, marginTop: 4 }}>
+                  Cria uma corrida ao lado e partilha o código ou convida quem estiver online abaixo!
                 </div>
               </div>
             ) : (
@@ -2306,6 +2775,153 @@ export const RaceMode: React.FC<RaceModeProps> = ({
               })
             )}
           </div>
+
+          {/* Online Players Presence List */}
+          <div
+            style={{
+              background: '#090d16',
+              border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: 14,
+              padding: 13,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 9,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 13, fontWeight: 900, color: '#e2e8f0' }}>
+                <Users size={15} color="#34d399" />
+                <span>Pilotos Online ({raceClient.onlinePlayers.length})</span>
+              </div>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: '#64748b' }}>
+                Quem está ligado agora
+              </span>
+            </div>
+
+            {raceClient.onlinePlayers.length === 0 ? (
+              <div style={{ fontSize: 11.5, color: '#64748b', textAlign: 'center', padding: '10px 0' }}>
+                {isOnline ? 'Sem pilotos ligados.' : 'A ligar ao servidor...'}
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 165, overflowY: 'auto', paddingRight: 2 }}>
+                {raceClient.onlinePlayers.map((op) => {
+                  const isMe = op.id === raceClient.selfClientId;
+                  const targetRoom =
+                    op.status === 'in_room' && op.roomCode
+                      ? raceClient.rooms.find((r) => r.code === op.roomCode)
+                      : null;
+                  const canQuickJoin =
+                    !isMe &&
+                    isOnline &&
+                    Boolean(targetRoom && targetRoom.status === 'lobby' && targetRoom.humanCount < targetRoom.maxHumans);
+
+                  const statusLabel =
+                    op.status === 'lobby'
+                      ? '🟢 No Lobby'
+                      : op.status === 'home'
+                      ? '🏠 No Menu'
+                      : op.status === 'in_room'
+                      ? `🟡 Na Sala #${op.roomCode}`
+                      : '🏁 Em Corrida';
+                  const statusColor =
+                    op.status === 'lobby'
+                      ? '#34d399'
+                      : op.status === 'home'
+                      ? '#94a3b8'
+                      : op.status === 'in_room'
+                      ? '#facc15'
+                      : '#fb7185';
+
+                  return (
+                    <div
+                      key={op.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 8,
+                        padding: '7px 10px',
+                        borderRadius: 9,
+                        background: isMe ? 'rgba(56, 189, 248, 0.12)' : 'rgba(15, 23, 42, 0.72)',
+                        border: isMe ? '1px solid rgba(56, 189, 248, 0.32)' : '1px solid #1e293b',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                        <span
+                          style={{
+                            width: 10,
+                            height: 10,
+                            borderRadius: '50%',
+                            background: op.primaryColor,
+                            border: '1.5px solid rgba(255,255,255,0.6)',
+                            flexShrink: 0,
+                          }}
+                        />
+                        <span
+                          style={{
+                            fontSize: 12.5,
+                            fontWeight: 800,
+                            color: '#f8fafc',
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                          }}
+                        >
+                          {op.name}
+                        </span>
+                        {isMe && (
+                          <span
+                            style={{
+                              fontSize: 9,
+                              fontWeight: 900,
+                              background: '#38bdf8',
+                              color: '#020617',
+                              padding: '1px 5px',
+                              borderRadius: 4,
+                            }}
+                          >
+                            TU
+                          </span>
+                        )}
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                        <span style={{ fontSize: 11, fontWeight: 800, color: statusColor }}>
+                          {statusLabel}
+                        </span>
+                        {canQuickJoin && targetRoom && (
+                          <button
+                            type="button"
+                            onClick={() => raceClient.joinRoom(targetRoom.code, driverProfile)}
+                            style={{
+                              background: '#059669',
+                              color: '#fff',
+                              border: 'none',
+                              borderRadius: 6,
+                              padding: '4px 9px',
+                              fontSize: 10.5,
+                              fontWeight: 900,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Entrar
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Global Lobby Chat */}
+          <LobbyChatBox
+            messages={raceClient.lobbyMessages}
+            selfClientId={raceClient.selfClientId}
+            isOnline={isOnline}
+            onSendMessage={(text) => raceClient.sendChatMessage('lobby', text)}
+          />
         </div>
 
         {/* Right: Create Race Room / Quick Solo */}
@@ -2571,6 +3187,8 @@ export const RaceMode: React.FC<RaceModeProps> = ({
           </div>
         </div>
       </div>
+
+      <GamepadSettingsModal open={gamepadModalOpen} onClose={() => setGamepadModalOpen(false)} />
     </div>
   );
 };

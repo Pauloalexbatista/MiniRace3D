@@ -1780,6 +1780,7 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
             carTuning={carTuning}
             headlightsOn={headlightsOn}
             onToggleHeadlights={handleToggleHeadlights}
+            onCycleCamera={() => setCameraMode((prev) => (prev === 'chase' ? 'cockpit' : prev === 'cockpit' ? 'orbit' : 'chase'))}
             environmentTheme={theme}
             resetTrigger={resetTrigger}
             raceStartTrigger={raceStartTrigger}

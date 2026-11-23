@@ -2,18 +2,23 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import type {
   AiRacerConfig,
   CarCategory,
+  CarClass,
+  ChatMessage,
   CountdownSyncInfo,
   DriverProfile,
   EnvironmentTheme,
   LocalCarNetSample,
   NetCarState,
+  OnlinePlayerInfo,
   RaceStandingEntry,
   ReadyProgressInfo,
   RemoteCarBufferEntry,
   RoomDetail,
+  RoomInviteNotification,
   RoomSummary,
   SavedCircuit,
   SpeedPreset,
+  VoiceServerEvent,
 } from './types';
 
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected';
@@ -45,11 +50,25 @@ export interface RoomSettingsPatch {
   aiCount?: number;
 }
 
+export interface ClientPresenceInfo {
+  name: string;
+  carClass: CarClass;
+  primaryColor: string;
+  secondaryColor: string;
+  screen: 'home' | 'lobby';
+}
+
 export function useRaceClient(enabled = true) {
   const [connectionState, setConnectionState] = useState<ConnectionState>('connecting');
   const [pingMs, setPingMs] = useState<number>(0);
+  const [selfClientId, setSelfClientId] = useState<string | null>(null);
   const [selfId, setSelfId] = useState<string | null>(null);
   const [rooms, setRooms] = useState<RoomSummary[]>([]);
+  const [onlinePlayers, setOnlinePlayers] = useState<OnlinePlayerInfo[]>([]);
+  const [lobbyMessages, setLobbyMessages] = useState<ChatMessage[]>([]);
+  const [roomMessages, setRoomMessages] = useState<ChatMessage[]>([]);
+  const [pendingInvite, setPendingInvite] = useState<RoomInviteNotification | null>(null);
+  const [inviteNotice, setInviteNotice] = useState<string | null>(null);
   const [currentRoom, setCurrentRoom] = useState<RoomDetail | null>(null);
   const [activeCircuit, setActiveCircuit] = useState<SavedCircuit | null>(null);
   const [aiRacers, setAiRacers] = useState<AiRacerConfig[]>([]);
@@ -70,8 +89,11 @@ export function useRaceClient(enabled = true) {
   const lastRoomStatusRef = useRef<string>('lobby');
   const reconnectAttemptRef = useRef<number>(0);
   const reconnectTimerRef = useRef<number | null>(null);
+  const inviteNoticeTimerRef = useRef<number | null>(null);
   const activeRoomRef = useRef<RoomDetail | null>(null);
   const selfIdRef = useRef<string | null>(null);
+  const presenceRef = useRef<ClientPresenceInfo | null>(null);
+  const voiceListenersRef = useRef<Set<(evt: VoiceServerEvent) => void>>(new Set());
 
   activeRoomRef.current = currentRoom;
   selfIdRef.current = selfId;
@@ -112,6 +134,9 @@ export function useRaceClient(enabled = true) {
         reconnectAttemptRef.current = 0;
         setConnectionState('connected');
         sendRaw({ type: 'ping', clientTime: performance.now() });
+        if (presenceRef.current) {
+          sendRaw({ type: 'set_presence', ...presenceRef.current });
+        }
         sendRaw({ type: 'list_rooms' });
 
         // Attempt automatic rejoin if connection dropped during an active race
@@ -143,10 +168,15 @@ export function useRaceClient(enabled = true) {
 
         switch (msg.type) {
           case 'welcome': {
+            if (typeof msg.clientId === 'string') {
+              setSelfClientId(msg.clientId);
+            }
             if (!hasRttSampleRef.current && typeof msg.serverTimeMs === 'number') {
               serverOffsetRef.current = msg.serverTimeMs - performance.now();
             }
             if (Array.isArray(msg.rooms)) setRooms(msg.rooms);
+            if (Array.isArray(msg.onlinePlayers)) setOnlinePlayers(msg.onlinePlayers);
+            if (Array.isArray(msg.lobbyChatHistory)) setLobbyMessages(msg.lobbyChatHistory);
             break;
           }
           case 'pong': {
@@ -167,9 +197,60 @@ export function useRaceClient(enabled = true) {
             if (Array.isArray(msg.rooms)) setRooms(msg.rooms);
             break;
           }
+          case 'online_players': {
+            if (Array.isArray(msg.players)) setOnlinePlayers(msg.players);
+            break;
+          }
+          case 'chat_message': {
+            const chatMsg = msg.message as ChatMessage | undefined;
+            if (chatMsg && typeof chatMsg.text === 'string') {
+              if (chatMsg.scope === 'room') {
+                setRoomMessages((prev) => {
+                  if (prev.some((m) => m.id === chatMsg.id)) return prev;
+                  const next = [...prev, chatMsg];
+                  return next.length > 60 ? next.slice(next.length - 60) : next;
+                });
+              } else {
+                setLobbyMessages((prev) => {
+                  if (prev.some((m) => m.id === chatMsg.id)) return prev;
+                  const next = [...prev, chatMsg];
+                  return next.length > 40 ? next.slice(next.length - 40) : next;
+                });
+              }
+            }
+            break;
+          }
+          case 'room_invite': {
+            if (msg.roomCode && msg.fromName) {
+              setPendingInvite({
+                fromId: String(msg.fromId || ''),
+                fromName: String(msg.fromName),
+                roomCode: String(msg.roomCode),
+                roomName: String(msg.roomName || 'Sala Online'),
+                circuitName: String(msg.circuitName || 'Circuito'),
+                carCategory: (msg.carCategory as CarCategory) || 'open',
+                sentAtMs: Number(msg.sentAtMs) || Date.now(),
+              });
+            }
+            break;
+          }
+          case 'invite_sent': {
+            if (msg.targetName) {
+              setInviteNotice(`📩 Convite enviado para ${msg.targetName}!`);
+              if (inviteNoticeTimerRef.current !== null) {
+                window.clearTimeout(inviteNoticeTimerRef.current);
+              }
+              inviteNoticeTimerRef.current = window.setTimeout(() => {
+                setInviteNotice(null);
+              }, 3500);
+            }
+            break;
+          }
           case 'room_joined': {
             setSelfId(msg.selfId || null);
             setCurrentRoom(msg.room || null);
+            setRoomMessages(Array.isArray(msg.chatHistory) ? msg.chatHistory : []);
+            setPendingInvite(null);
             setErrorMsg(null);
             break;
           }
@@ -182,6 +263,7 @@ export function useRaceClient(enabled = true) {
           case 'left_room': {
             remoteCarsRef.current.clear();
             setCurrentRoom(null);
+            setRoomMessages([]);
             setActiveCircuit(null);
             setAiRacers([]);
             setReadyProgress(null);
@@ -189,6 +271,14 @@ export function useRaceClient(enabled = true) {
             setStandings([]);
             setFinishDeadlineLocalMs(null);
             setFinalStandings(null);
+            break;
+          }
+          case 'voice_peer_joined':
+          case 'voice_peer_left':
+          case 'voice_peer_muted':
+          case 'voice_signal': {
+            const evt = msg as VoiceServerEvent;
+            voiceListenersRef.current.forEach((cb) => cb(evt));
             break;
           }
           case 'host_changed': {
@@ -341,6 +431,7 @@ export function useRaceClient(enabled = true) {
       disposed = true;
       if (pingTimer !== null) window.clearInterval(pingTimer);
       if (reconnectTimerRef.current !== null) window.clearTimeout(reconnectTimerRef.current);
+      if (inviteNoticeTimerRef.current !== null) window.clearTimeout(inviteNoticeTimerRef.current);
       try {
         wsRef.current?.close();
       } catch {
@@ -349,6 +440,59 @@ export function useRaceClient(enabled = true) {
       wsRef.current = null;
     };
   }, [enabled, sendRaw]);
+
+  const updatePresence = useCallback(
+    (presence: ClientPresenceInfo) => {
+      presenceRef.current = presence;
+      sendRaw({ type: 'set_presence', ...presence });
+    },
+    [sendRaw]
+  );
+
+  const sendChatMessage = useCallback(
+    (scope: 'lobby' | 'room', text: string) => {
+      const clean = text.trim();
+      if (!clean) return false;
+      return sendRaw({ type: 'chat_send', scope, text: clean });
+    },
+    [sendRaw]
+  );
+
+  const inviteOnlinePlayer = useCallback(
+    (targetClientId: string) => {
+      return sendRaw({ type: 'invite_player', targetClientId });
+    },
+    [sendRaw]
+  );
+
+  const dismissInvite = useCallback(() => {
+    setPendingInvite(null);
+  }, []);
+
+  const sendVoiceJoin = useCallback(
+    (muted: boolean) => sendRaw({ type: 'voice_join', muted }),
+    [sendRaw]
+  );
+
+  const sendVoiceLeave = useCallback(() => sendRaw({ type: 'voice_leave' }), [sendRaw]);
+
+  const sendVoiceMute = useCallback(
+    (muted: boolean) => sendRaw({ type: 'voice_mute', muted }),
+    [sendRaw]
+  );
+
+  const sendVoiceSignal = useCallback(
+    (targetId: string, signalType: 'offer' | 'answer' | 'ice', data: unknown) =>
+      sendRaw({ type: 'voice_signal', targetId, signalType, data }),
+    [sendRaw]
+  );
+
+  const subscribeVoiceEvents = useCallback((listener: (evt: VoiceServerEvent) => void) => {
+    voiceListenersRef.current.add(listener);
+    return () => {
+      voiceListenersRef.current.delete(listener);
+    };
+  }, []);
 
   const refreshRooms = useCallback(() => {
     sendRaw({ type: 'list_rooms' });
@@ -374,6 +518,7 @@ export function useRaceClient(enabled = true) {
     sendRaw({ type: 'leave_room' });
     remoteCarsRef.current.clear();
     setCurrentRoom(null);
+    setRoomMessages([]);
     setActiveCircuit(null);
     setAiRacers([]);
     setReadyProgress(null);
@@ -436,8 +581,14 @@ export function useRaceClient(enabled = true) {
   return {
     connectionState,
     pingMs,
+    selfClientId,
     selfId,
     rooms,
+    onlinePlayers,
+    lobbyMessages,
+    roomMessages,
+    pendingInvite,
+    inviteNotice,
     currentRoom,
     activeCircuit,
     aiRacers,
@@ -449,6 +600,15 @@ export function useRaceClient(enabled = true) {
     errorMsg,
     hostNotice,
     remoteCarsRef,
+    updatePresence,
+    sendChatMessage,
+    inviteOnlinePlayer,
+    dismissInvite,
+    sendVoiceJoin,
+    sendVoiceLeave,
+    sendVoiceMute,
+    sendVoiceSignal,
+    subscribeVoiceEvents,
     refreshRooms,
     createRoom,
     joinRoom,

@@ -3,8 +3,44 @@ import { HomeScreen } from './components/HomeScreen';
 import { TrackEditorMode } from './modes/TrackEditorMode';
 import { RaceMode } from './modes/RaceMode';
 import { useRaceClient } from './multiplayer/useRaceClient';
+import type { CarClass } from './multiplayer/types';
 
 type AppMode = 'home' | 'editor' | 'race';
+
+function readStoredPresenceProfile(): {
+  name: string;
+  carClass: CarClass;
+  primaryColor: string;
+  secondaryColor: string;
+} {
+  try {
+    const raw = localStorage.getItem('minirace3d_driver_profile');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const cls: CarClass =
+        parsed.carClass === 'f1' ||
+        parsed.carClass === 'gt' ||
+        parsed.carClass === 'rally' ||
+        parsed.carClass === 'drift'
+          ? parsed.carClass
+          : 'f1';
+      return {
+        name: String(parsed.name || 'Piloto').slice(0, 20),
+        carClass: cls,
+        primaryColor: typeof parsed.primaryColor === 'string' ? parsed.primaryColor : '#e11d48',
+        secondaryColor: typeof parsed.secondaryColor === 'string' ? parsed.secondaryColor : '#f8fafc',
+      };
+    }
+  } catch {
+    // Ignore storage read errors
+  }
+  return {
+    name: 'Piloto',
+    carClass: 'f1',
+    primaryColor: '#e11d48',
+    secondaryColor: '#f8fafc',
+  };
+}
 
 function readInitialRoute(): { mode: AppMode; roomCode: string | null } {
   if (typeof window === 'undefined') return { mode: 'home', roomCode: null };
@@ -25,6 +61,13 @@ export default function App() {
 
   // Keep live WebSocket session active in HomeScreen and RaceMode
   const raceClient = useRaceClient(appMode !== 'editor');
+  const { updatePresence } = raceClient;
+
+  useEffect(() => {
+    if (appMode !== 'home') return;
+    const prof = readStoredPresenceProfile();
+    updatePresence({ ...prof, screen: 'home' });
+  }, [appMode, updatePresence]);
 
   const navigateToMode = useCallback((nextMode: AppMode) => {
     setAppMode(nextMode);
@@ -105,6 +148,7 @@ export default function App() {
       onSelectRace={() => navigateToMode('race')}
       savedCircuitsCount={savedCircuitsCount}
       activeRoomsCount={raceClient.rooms.length}
+      onlinePlayersCount={raceClient.onlinePlayers.length}
       connectionState={raceClient.connectionState}
     />
   );
