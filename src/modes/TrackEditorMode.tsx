@@ -1,7 +1,7 @@
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { useCircuitStorage } from '../hooks/useCircuitStorage';
 import { ReferenceMapOverlay } from '../components/ReferenceMapOverlay';
-import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback, useSyncExternalStore } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { Physics, RigidBody, CuboidCollider } from '@react-three/rapier';
@@ -37,6 +37,8 @@ import { StudioSidebar, StudioTab } from '../components/StudioSidebar';
 import { RapierCarController, CAR_CLASS_DEFAULTS, CarTuning } from '../components/RapierCarController';
 import { CarClass } from '../components/Car3D';
 import { HUD } from '../components/HUD';
+import { GamepadSettingsModal } from '../components/GamepadSettingsModal';
+import { getGamepadStatus, subscribeGamepadStatus } from '../gamepadInput';
 import { SurfaceType, SpeedPreset } from '../physics';
 import { TrackThemeId } from '../trackProfile';
 import {
@@ -64,7 +66,8 @@ import {
   RotateCcw,
   Undo2,
   Home,
-  Lightbulb
+  Lightbulb,
+  Gamepad2
 } from 'lucide-react';
 
 export interface TrackEditorModeProps {
@@ -76,6 +79,9 @@ const PHYSICS_GRAVITY: [number, number, number] = [0, -24, 0];
 const SAFETY_FLOOR_ARGS: [number, number, number] = [10000, 1, 10000];
 
 export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, onGoToRace }) => {
+  const gamepadStatus = useSyncExternalStore(subscribeGamepadStatus, getGamepadStatus);
+  const [gamepadModalOpen, setGamepadModalOpen] = useState<boolean>(false);
+  const hasGamepad = Boolean(gamepadStatus.activePad);
   const [tracksList, setTracksList] = useState(RAW_TRACKS);
   const [isStudioOpen, setIsStudioOpen] = useState<boolean>(true);
   const [selectedTrackId, setSelectedTrackId] = useState<string>(RAW_TRACKS[0]?.id || 'nova_pista');
@@ -2122,6 +2128,26 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
             <Lightbulb size={13} />
             <span>{headlightsOn ? 'Faróis (L)' : 'Faróis OFF (L)'}</span>
           </button>
+          <button
+            onClick={() => setGamepadModalOpen(true)}
+            title="Testar e configurar comando / volante"
+            style={{
+              padding: '6px 10px',
+              borderRadius: 7,
+              fontSize: 11,
+              fontWeight: 800,
+              cursor: 'pointer',
+              border: hasGamepad ? '1px solid rgba(52, 211, 153, 0.45)' : '1px solid rgba(255, 255, 255, 0.16)',
+              background: hasGamepad ? 'rgba(16, 185, 129, 0.16)' : 'rgba(30, 41, 59, 0.85)',
+              color: hasGamepad ? '#34d399' : '#cbd5e1',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5
+            }}
+          >
+            <Gamepad2 size={13} />
+            <span>{hasGamepad ? 'Comando ON' : 'Comando'}</span>
+          </button>
         </div>
 
         {/* 3. LADO DIREITO: ESTÚDIO + CORRER */}
@@ -2721,7 +2747,7 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
         </div>
       )}
 
-            
+      <GamepadSettingsModal open={gamepadModalOpen} onClose={() => setGamepadModalOpen(false)} />
     </div>
   );
 }

@@ -7,6 +7,7 @@ import {
   GamepadAction,
   GamepadBaselineSnapshot,
   getGamepadStatus,
+  recalibrateGamepads,
   resetGamepadConfig,
   setCustomGamepadBinding,
   setGamepadConfig,
@@ -382,31 +383,49 @@ export const GamepadSettingsModal: React.FC<GamepadSettingsModalProps> = ({ open
 
         {/* Custom Action Remap Table */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
             <span style={{ fontSize: 12.5, fontWeight: 900, color: '#e2e8f0' }}>Mapeamento de Botões</span>
-            <button
-              onClick={() => {
-                setListeningAction(null);
-                setBaseline(null);
-                resetGamepadConfig();
-              }}
-              style={{
-                background: '#1e293b',
-                color: '#cbd5e1',
-                border: '1px solid #334155',
-                borderRadius: 8,
-                padding: '5px 10px',
-                fontSize: 11,
-                fontWeight: 800,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 5,
-              }}
-            >
-              <RotateCcw size={12} />
-              <span>Repor Padrão</span>
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <button
+                onClick={() => recalibrateGamepads()}
+                title="Releitura do ponto zero dos analógicos e botões em repouso"
+                style={{
+                  background: '#1e293b',
+                  color: '#7dd3fc',
+                  border: '1px solid rgba(56, 189, 248, 0.35)',
+                  borderRadius: 8,
+                  padding: '5px 10px',
+                  fontSize: 11,
+                  fontWeight: 800,
+                  cursor: 'pointer',
+                }}
+              >
+                Recalibrar Repouso
+              </button>
+              <button
+                onClick={() => {
+                  setListeningAction(null);
+                  setBaseline(null);
+                  resetGamepadConfig();
+                }}
+                style={{
+                  background: '#1e293b',
+                  color: '#cbd5e1',
+                  border: '1px solid #334155',
+                  borderRadius: 8,
+                  padding: '5px 10px',
+                  fontSize: 11,
+                  fontWeight: 800,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 5,
+                }}
+              >
+                <RotateCcw size={12} />
+                <span>Repor Padrão</span>
+              </button>
+            </div>
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -488,6 +507,59 @@ export const GamepadSettingsModal: React.FC<GamepadSettingsModalProps> = ({ open
                 </div>
               );
             })}
+          </div>
+        </div>
+
+        {/* Raw Browser Diagnostics */}
+        <div
+          style={{
+            background: '#090d16',
+            border: '1px solid #1e293b',
+            borderRadius: 12,
+            padding: 12,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+            fontSize: 11,
+          }}
+        >
+          <div style={{ fontWeight: 900, color: '#94a3b8', letterSpacing: '0.04em' }}>
+            DIAGNÓSTICO RAW DO BROWSER
+          </div>
+          {status.connectedPads.length === 0 ? (
+            <div style={{ color: '#64748b', fontWeight: 600 }}>
+              Nenhum dispositivo recebido por navigator.getGamepads().
+            </div>
+          ) : (
+            <>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {status.connectedPads.map((p) => (
+                  <div
+                    key={p.index}
+                    style={{
+                      color: p.isActive ? '#6ee7b7' : '#94a3b8',
+                      fontWeight: p.isActive ? 800 : 600,
+                      fontFamily: 'monospace',
+                    }}
+                  >
+                    {p.isActive ? '▶ ' : '  '}Slot #{p.index}: {p.id} [{p.mapping}] • {p.axesCount} eixos, {p.buttonsCount} botões
+                  </div>
+                ))}
+              </div>
+              <div style={{ color: '#cbd5e1', fontFamily: 'monospace' }}>
+                Botões raw:{' '}
+                {status.live.rawPressedButtons.length > 0
+                  ? status.live.rawPressedButtons.map((b) => `#${b.index}(${b.value.toFixed(2)})`).join(' ')
+                  : 'nenhum'}
+              </div>
+              <div style={{ color: '#94a3b8', fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                Eixos raw: [{status.live.axes.map((a) => a.toFixed(2)).join(', ')}]
+              </div>
+            </>
+          )}
+          <div style={{ color: '#94a3b8', fontSize: 10.5, lineHeight: 1.4, marginTop: 2 }}>
+            Dica Logitech (F310/F710): verifica o interruptor <strong>X / D</strong> na parte traseira (recomendado em{' '}
+            <strong>X</strong>) e o botão <strong>MODE</strong> caso o analógico pareça trocado com o D-Pad.
           </div>
         </div>
       </div>

@@ -35,6 +35,7 @@ export interface GamepadLivePreview {
   brake: number;
   handbrake: boolean;
   pressedButtons: number[];
+  rawPressedButtons: Array<{ index: number; value: number }>;
   axes: number[];
 }
 
@@ -80,6 +81,7 @@ const DEFAULT_CONFIG: GamepadConfig = {
 interface PadCalibration {
   key: string;
   restAxes: number[];
+  prevAxes: number[];
   initiallyPressed: boolean[];
   prevButtons: boolean[];
   prevCustomDiscrete: Record<string, boolean>;
@@ -193,6 +195,7 @@ function buildInitialSnapshot(): GamepadStatusSnapshot {
       brake: 0,
       handbrake: false,
       pressedButtons: [],
+      rawPressedButtons: [],
       axes: [],
     },
     lastError: null,
@@ -249,6 +252,7 @@ function getOrCalibratePad(gp: Gamepad): PadCalibration {
   const created: PadCalibration = {
     key,
     restAxes,
+    prevAxes: restAxes.slice(),
     initiallyPressed,
     prevButtons,
     prevCustomDiscrete: {},
@@ -258,20 +262,33 @@ function getOrCalibratePad(gp: Gamepad): PadCalibration {
   return created;
 }
 
-function isPadHavingActivity(gp: Gamepad, cal: PadCalibration): boolean {
+function getPadActivity(gp: Gamepad, cal: PadCalibration): { hasButton: boolean; hasAxis: boolean } {
+  let hasButton = false;
   for (let i = 0; i < gp.buttons.length; i++) {
-    const pressed = Boolean(gp.buttons[i]?.pressed);
-    if (pressed && !cal.initiallyPressed[i]) return true;
+    const btn = gp.buttons[i];
+    if (!btn || cal.initiallyPressed[i]) continue;
+    if (btn.pressed || (typeof btn.value === 'number' && Number.isFinite(btn.value) && btn.value > 0.25)) {
+      hasButton = true;
+      break;
+    }
   }
+
+  let hasAxis = false;
   for (let i = 0; i < gp.axes.length; i++) {
     const val = gp.axes[i];
     if (!Number.isFinite(val)) continue;
-    // Ignore DirectInput POV hat resting at ~3.28 or > 1.2
-    if (Math.abs(val) > 1.2) continue;
-    const rest = cal.restAxes[i] ?? 0;
-    if (Math.abs(rest) <= 1.2 && Math.abs(val - rest) > 0.25) return true;
+    const prevVal = cal.prevAxes[i] ?? val;
+    if (Math.abs(val) > 1.2 || Math.abs(prevVal) > 1.2) {
+      cal.prevAxes[i] = val;
+      continue;
+    }
+    if (Math.abs(val - prevVal) > 0.12) {
+      hasAxis = true;
+      cal.prevAxes[i] = val;
+    }
   }
-  return false;
+
+  return { hasButton, hasAxis };
 }
 
 function selectActiveGamepad(pads: Gamepad[]): Gamepad | null {
@@ -280,13 +297,18 @@ function selectActiveGamepad(pads: Gamepad[]): Gamepad | null {
     return null;
   }
 
-  // Calibrate all connected pads and check for live user activity
-  let activityPad: Gamepad | null = null;
+  // Calibrate all connected pads and prioritize live button activity over axis movement
+  let buttonPad: Gamepad | null = null;
+  let axisPad: Gamepad | null = null;
   for (let i = 0; i < pads.length; i++) {
     const pad = pads[i];
     const cal = getOrCalibratePad(pad);
-    if (!activityPad && isPadHavingActivity(pad, cal)) {
-      activityPad = pad;
+    const activity = getPadActivity(pad, cal);
+    if (!buttonPad && activity.hasButton) {
+      buttonPad = pad;
+    }
+    if (!axisPad && activity.hasAxis) {
+      axisPad = pad;
     }
   }
 
@@ -298,9 +320,14 @@ function selectActiveGamepad(pads: Gamepad[]): Gamepad | null {
     }
   }
 
-  if (activityPad) {
-    lastActiveIndex = activityPad.index;
-    return activityPad;
+  if (buttonPad) {
+    lastActiveIndex = buttonPad.index;
+    return buttonPad;
+  }
+
+  if (axisPad) {
+    lastActiveIndex = axisPad.index;
+    return axisPad;
   }
 
   if (lastActiveIndex !== null) {
@@ -365,8 +392,8 @@ function decodeDirectInputPov(hatVal: number): { up: boolean; down: boolean; lef
 }
 
 function findTriggerAxisValues(gp: Gamepad, cal: PadCalibration): { throttle: number; brake: number } {
-  if (gp.mapping === 'standard') return { throttle: 0, brake: 0 };
-  // For non-standard DirectInput / Xbox / PS drivers where triggers sit on axes resting at +/-1
+  if (gp.mapping === 'standard' || gp.buttons.length >= 8) return { throttle: 0, brake: 0 };
+  // Only for bare pedals/wheels without buttons[6]/[7] where triggers sit on axes resting at +/-1
   const candidateIndices = [5, 4, 2, 3];
   let throttle = 0;
   let brake = 0;
@@ -398,31 +425,33 @@ function evaluatePadInput(gp: Gamepad, advanceEdgeState: boolean): GamepadDrivin
   const cal = getOrCalibratePad(gp);
   const deadzone = currentConfig.deadzone;
   const custom = currentConfig.customBindings;
+  const isLogitechDInput =
+    gp.mapping !== 'standard' && /logitech|dual action|rumblepad|f310|f710/i.test(gp.id);
 
   let pov = { up: false, down: false, left: false, right: false };
-  if (gp.mapping !== 'standard' && gp.axes.length >= 10) {
+  if (gp.mapping !== 'standard' && gp.axes.length >= 10 && Math.abs(cal.restAxes[9] ?? 0) > 1.2) {
     pov = decodeDirectInputPov(gp.axes[9]);
   }
 
   // 1. Steering (-1 right, +1 left)
-  let steer = 0;
-  if (custom.steerLeft || custom.steerRight) {
-    const leftVal = custom.steerLeft ? readBindingAnalog(gp, cal, custom.steerLeft) : 0;
-    const rightVal = custom.steerRight ? readBindingAnalog(gp, cal, custom.steerRight) : 0;
-    steer = leftVal - rightVal;
-  } else {
-    const rawStickX = gp.axes[0] ?? 0;
-    const restStickX = Math.abs(cal.restAxes[0] ?? 0) < 0.35 ? cal.restAxes[0] ?? 0 : 0;
-    const stickX = Number.isFinite(rawStickX) ? rawStickX - restStickX : 0;
-    if (Math.abs(stickX) > deadzone) {
-      const norm = (Math.abs(stickX) - deadzone) / Math.max(0.1, 1 - deadzone);
-      steer = -Math.sign(stickX) * Math.pow(Math.min(1, norm), 1.45);
-    } else if (isButtonPressed(gp, cal, 14) || pov.left) {
-      steer = 1;
-    } else if (isButtonPressed(gp, cal, 15) || pov.right) {
-      steer = -1;
-    }
+  let defaultLeft = 0;
+  let defaultRight = 0;
+  const rawStickX = gp.axes[0] ?? 0;
+  const restStickX = Math.abs(cal.restAxes[0] ?? 0) < 0.35 ? cal.restAxes[0] ?? 0 : 0;
+  const stickX = Number.isFinite(rawStickX) ? rawStickX - restStickX : 0;
+  if (Math.abs(stickX) > deadzone) {
+    const norm = (Math.abs(stickX) - deadzone) / Math.max(0.1, 1 - deadzone);
+    const mag = Math.pow(Math.min(1, norm), 1.45);
+    if (stickX < 0) defaultLeft = mag;
+    else defaultRight = mag;
+  } else if (isButtonPressed(gp, cal, 14) || pov.left) {
+    defaultLeft = 1;
+  } else if (isButtonPressed(gp, cal, 15) || pov.right) {
+    defaultRight = 1;
   }
+  const leftVal = custom.steerLeft ? readBindingAnalog(gp, cal, custom.steerLeft) : defaultLeft;
+  const rightVal = custom.steerRight ? readBindingAnalog(gp, cal, custom.steerRight) : defaultRight;
+  let steer = leftVal - rightVal;
   if (currentConfig.invertSteer) {
     steer = -steer;
   }
@@ -433,6 +462,11 @@ function evaluatePadInput(gp: Gamepad, advanceEdgeState: boolean): GamepadDrivin
   let throttle = 0;
   if (custom.throttle) {
     throttle = readBindingAnalog(gp, cal, custom.throttle);
+  } else if (isLogitechDInput) {
+    const btnRT = readButtonValue(gp, cal, 7);
+    const btnA = isButtonPressed(gp, cal, 1) ? 1 : 0;
+    const dpadUp = pov.up ? 1 : 0;
+    throttle = Math.max(btnRT, btnA, dpadUp);
   } else {
     const btnRT = readButtonValue(gp, cal, 7);
     const btnA = isButtonPressed(gp, cal, 0) ? 1 : 0;
@@ -443,6 +477,11 @@ function evaluatePadInput(gp: Gamepad, advanceEdgeState: boolean): GamepadDrivin
   let brake = 0;
   if (custom.brake) {
     brake = readBindingAnalog(gp, cal, custom.brake);
+  } else if (isLogitechDInput) {
+    const btnLT = readButtonValue(gp, cal, 6);
+    const btnB = isButtonPressed(gp, cal, 2) ? 1 : 0;
+    const dpadDown = pov.down ? 1 : 0;
+    brake = Math.max(btnLT, btnB, dpadDown);
   } else {
     const btnLT = readButtonValue(gp, cal, 6);
     const btnB = isButtonPressed(gp, cal, 1) ? 1 : 0;
@@ -454,6 +493,8 @@ function evaluatePadInput(gp: Gamepad, advanceEdgeState: boolean): GamepadDrivin
   let handbrake = false;
   if (custom.handbrake) {
     handbrake = readBindingDigital(gp, cal, custom.handbrake);
+  } else if (isLogitechDInput) {
+    handbrake = isButtonPressed(gp, cal, 0) || isButtonPressed(gp, cal, 5);
   } else {
     handbrake = isButtonPressed(gp, cal, 2) || isButtonPressed(gp, cal, 5);
   }
@@ -493,7 +534,9 @@ function evaluatePadInput(gp: Gamepad, advanceEdgeState: boolean): GamepadDrivin
   }
 
   const anyStartPressed =
-    throttle > 0.25 || isButtonPressed(gp, cal, 0) || isButtonPressed(gp, cal, 9);
+    throttle > 0.25 ||
+    isButtonPressed(gp, cal, isLogitechDInput ? 1 : 0) ||
+    isButtonPressed(gp, cal, 9);
 
   let anyBtnPressed = false;
   for (let i = 0; i < gp.buttons.length; i++) {
@@ -522,7 +565,12 @@ function evaluatePadInput(gp: Gamepad, advanceEdgeState: boolean): GamepadDrivin
 export function pollGamepadDrivingInput(nowMs: number): GamepadDrivingInput {
   void nowMs;
   const pads = getGamepadsSafe();
-  if (pads.length === 0) return EMPTY_DRIVING_INPUT;
+  if (pads.length === 0) {
+    if (cachedSnapshot.connectedPads.length > 0) {
+      refreshGamepadStatusSnapshot(false);
+    }
+    return EMPTY_DRIVING_INPUT;
+  }
 
   // Clean up disconnected calibration slots
   const connectedIndices = new Set(pads.map((p) => p.index));
@@ -532,6 +580,14 @@ export function pollGamepadDrivingInput(nowMs: number): GamepadDrivingInput {
 
   const activePad = selectActiveGamepad(pads);
   if (!activePad) return EMPTY_DRIVING_INPUT;
+
+  if (
+    pads.length !== cachedSnapshot.connectedPads.length ||
+    activePad.index !== (cachedSnapshot.activePad?.index ?? -1)
+  ) {
+    refreshGamepadStatusSnapshot(false);
+  }
+
   return evaluatePadInput(activePad, true);
 }
 
@@ -570,6 +626,19 @@ function snapshotsDiffer(a: GamepadStatusSnapshot, b: GamepadStatusSnapshot): bo
   for (let i = 0; i < a.live.pressedButtons.length; i++) {
     if (a.live.pressedButtons[i] !== b.live.pressedButtons[i]) return true;
   }
+  if (a.live.rawPressedButtons.length !== b.live.rawPressedButtons.length) return true;
+  for (let i = 0; i < a.live.rawPressedButtons.length; i++) {
+    if (
+      a.live.rawPressedButtons[i].index !== b.live.rawPressedButtons[i].index ||
+      Math.abs(a.live.rawPressedButtons[i].value - b.live.rawPressedButtons[i].value) > 0.05
+    ) {
+      return true;
+    }
+  }
+  if (a.live.axes.length !== b.live.axes.length) return true;
+  for (let i = 0; i < a.live.axes.length; i++) {
+    if (Math.abs(a.live.axes[i] - b.live.axes[i]) > 0.03) return true;
+  }
   return false;
 }
 
@@ -593,6 +662,7 @@ export function refreshGamepadStatusSnapshot(includeLive = true): void {
     brake: 0,
     handbrake: false,
     pressedButtons: [],
+    rawPressedButtons: [],
     axes: [],
   };
 
@@ -600,8 +670,15 @@ export function refreshGamepadStatusSnapshot(includeLive = true): void {
     const evalRes = evaluatePadInput(activePad, false);
     const cal = getOrCalibratePad(activePad);
     const pressedButtons: number[] = [];
+    const rawPressedButtons: Array<{ index: number; value: number }> = [];
     for (let i = 0; i < activePad.buttons.length; i++) {
+      const btn = activePad.buttons[i];
+      if (!btn) continue;
       if (isButtonPressed(activePad, cal, i)) pressedButtons.push(i);
+      const val = typeof btn.value === 'number' && Number.isFinite(btn.value) ? btn.value : btn.pressed ? 1 : 0;
+      if (btn.pressed || val > 0.05) {
+        rawPressedButtons.push({ index: i, value: Number(val.toFixed(2)) });
+      }
     }
     const axes: number[] = [];
     for (let i = 0; i < activePad.axes.length; i++) {
@@ -613,6 +690,7 @@ export function refreshGamepadStatusSnapshot(includeLive = true): void {
       brake: evalRes.brake,
       handbrake: evalRes.handbrake,
       pressedButtons,
+      rawPressedButtons,
       axes,
     };
   }
@@ -692,6 +770,11 @@ export function resetGamepadConfig(): void {
   refreshGamepadStatusSnapshot(true);
 }
 
+export function recalibrateGamepads(): void {
+  padCalibrationMap.clear();
+  refreshGamepadStatusSnapshot(true);
+}
+
 export function captureBaselineSnapshot(): GamepadBaselineSnapshot | null {
   const pads = getGamepadsSafe();
   const active = selectActiveGamepad(pads);
@@ -700,7 +783,7 @@ export function captureBaselineSnapshot(): GamepadBaselineSnapshot | null {
     key: `${active.index}::${active.id}`,
     index: active.index,
     axes: Array.from(active.axes, (a) => (Number.isFinite(a) ? a : 0)),
-    buttons: Array.from(active.buttons, (b) => Boolean(b?.pressed)),
+    buttons: Array.from(active.buttons, (b) => Boolean(b?.pressed) || (b?.value ?? 0) > 0.55),
   };
 }
 
@@ -710,7 +793,7 @@ export function detectNextBindingFromBaseline(baseline: GamepadBaselineSnapshot)
   if (!active) return null;
 
   for (let i = 0; i < active.buttons.length; i++) {
-    const nowPressed = Boolean(active.buttons[i]?.pressed);
+    const nowPressed = Boolean(active.buttons[i]?.pressed) || (active.buttons[i]?.value ?? 0) > 0.55;
     const wasPressed = Boolean(baseline.buttons[i]);
     if (nowPressed && !wasPressed) {
       return { kind: 'button', index: i };
