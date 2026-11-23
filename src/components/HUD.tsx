@@ -1,6 +1,13 @@
 ﻿import React, { useSyncExternalStore } from 'react';
 import { SurfaceType, SpeedPreset } from '../physics';
 import { subscribeTelemetry, getTelemetry, requestStartCountdown } from '../telemetryStore';
+import {
+  getAudioSettings,
+  subscribeAudioSettings,
+  toggleAudioMuted,
+  setAudioVolume,
+  carSoundEngine,
+} from '../soundEngine';
 import type { RaceStandingEntry } from '../multiplayer/types';
 
 interface HUDProps {
@@ -37,6 +44,7 @@ interface HUDProps {
 
 export const HUD: React.FC<HUDProps> = React.memo((props) => {
   const store = useSyncExternalStore(subscribeTelemetry, getTelemetry);
+  const audio = useSyncExternalStore(subscribeAudioSettings, getAudioSettings);
   const speedKmh = props.speedKmh ?? store.speedKmh;
   const throttle = props.throttle ?? store.throttle;
   const brake = props.brake ?? store.brake;
@@ -71,7 +79,18 @@ export const HUD: React.FC<HUDProps> = React.memo((props) => {
     return '8';
   };
 
-  const gear = getGear(speedKmh);
+  const gear =
+    props.speedKmh != null
+      ? getGear(speedKmh)
+      : store.gear < 0
+      ? 'R'
+      : store.gear === 0
+      ? 'N'
+      : String(store.gear);
+  const rpmNorm =
+    props.speedKmh != null
+      ? Math.max(0, Math.min(1, speedKmh / 300))
+      : Math.max(0, Math.min(1, store.rpmNorm));
   const roundedSpeed = Math.round(speedKmh);
 
   const getHealthColor = (pct: number) => {
@@ -530,11 +549,36 @@ export const HUD: React.FC<HUDProps> = React.memo((props) => {
         userSelect: 'none',
         zIndex: 10
       }}>
+        {/* 12-Segment F1 RPM Shift-Light Strip */}
+        <div style={{ width: '100%', display: 'flex', gap: 3, alignItems: 'center', marginBottom: 2 }}>
+          {Array.from({ length: 12 }, (_, idx) => {
+            const thresh = (idx + 1) / 12;
+            const lit = rpmNorm >= thresh * 0.94;
+            const redlineBlink = rpmNorm > 0.93 && Math.floor(performance.now() / 75) % 2 === 0;
+            const activeColor = idx < 5 ? '#10b981' : idx < 9 ? '#f59e0b' : '#ef4444';
+            const glowColor = idx < 5 ? 'rgba(16,185,129,0.55)' : idx < 9 ? 'rgba(245,158,11,0.65)' : 'rgba(239,68,68,0.85)';
+            const showLit = rpmNorm > 0.93 ? redlineBlink : lit;
+            return (
+              <div
+                key={`rpm_led_${idx}`}
+                style={{
+                  flex: 1,
+                  height: 6,
+                  borderRadius: 3,
+                  background: showLit ? activeColor : '#1e293b',
+                  boxShadow: showLit ? `0 0 8px ${glowColor}` : 'inset 0 1px 2px rgba(0,0,0,0.6)',
+                  transition: 'background 0.04s ease',
+                }}
+              />
+            );
+          })}
+        </div>
+
         {/* Gear and Speed */}
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
           {/* Gear Badge */}
           <div style={{
-            background: '#e11d48',
+            background: gear === 'R' ? '#f59e0b' : '#e11d48',
             color: '#fff',
             fontWeight: 900,
             fontSize: 26,
@@ -615,6 +659,54 @@ export const HUD: React.FC<HUDProps> = React.memo((props) => {
           >
             🔴 STOP
           </div>
+        </div>
+
+        {/* Audio Mute & Volume Controls */}
+        <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <button
+            type="button"
+            onClick={() => {
+              carSoundEngine.unlock();
+              toggleAudioMuted();
+            }}
+            title="Ligar/Silenciar som (Tecla M)"
+            style={{
+              padding: '4px 8px',
+              borderRadius: 7,
+              border: !audio.muted && audio.volume > 0.01
+                ? '1px solid rgba(56, 189, 248, 0.5)'
+                : '1px solid rgba(148, 163, 184, 0.25)',
+              background: !audio.muted && audio.volume > 0.01
+                ? 'rgba(56, 189, 248, 0.16)'
+                : 'rgba(30, 41, 59, 0.75)',
+              color: !audio.muted && audio.volume > 0.01 ? '#7dd3fc' : '#94a3b8',
+              fontSize: 9.5,
+              fontWeight: 900,
+              letterSpacing: '0.03em',
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {audio.muted || audio.volume <= 0.01 ? '🔇 MUDO (M)' : '🔊 SOM ON (M)'}
+          </button>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.02}
+            value={audio.muted ? 0 : audio.volume}
+            onChange={(e) => {
+              carSoundEngine.unlock();
+              setAudioVolume(Number(e.target.value));
+            }}
+            aria-label="Volume do som"
+            style={{
+              flex: 1,
+              height: 4,
+              accentColor: '#38bdf8',
+              cursor: 'pointer',
+            }}
+          />
         </div>
 
         {/* Throttle & Brake Pedals Bar */}

@@ -5,6 +5,8 @@ export type RaceStartPhase = 'ready' | 'lights' | 'green' | 'racing';
 
 export interface TelemetryData {
   speedKmh: number;
+  gear: number;
+  rpmNorm: number;
   throttle: number;
   brake: number;
   steer: number;
@@ -31,6 +33,8 @@ export interface TelemetryData {
 
 export const DEFAULT_TELEMETRY: TelemetryData = {
   speedKmh: 0,
+  gear: 0,
+  rpmNorm: 0,
   throttle: 0,
   brake: 0,
   steer: 0,

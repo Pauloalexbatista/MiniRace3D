@@ -7,6 +7,7 @@ import { bermaWidth } from '../trackCorridor';
 import { SurfaceType, SpeedPreset } from '../physics';
 import { Car3D, CarClass } from './Car3D';
 import { publishTelemetry, TelemetryData, PitStopStatus, RaceStartPhase, registerStartCountdownHandler } from '../telemetryStore';
+import { carSoundEngine, toggleAudioMuted } from '../soundEngine';
 import type { LocalCarNetSample } from '../multiplayer/types';
 import {
   OUTDOOR_CHASE_BACK,
@@ -292,7 +293,10 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
   const lastPublishedBrakingRef = useRef(false);
   const gpRecoverCooldownRef = useRef(0);
   const gpLightsCooldownRef = useRef(0);
-  const audioCtxRef = useRef<AudioContext | null>(null);
+  const gearRef = useRef(0);
+  const rpmNormRef = useRef(0);
+  const prevPitStatusRef = useRef<PitStopStatus>('none');
+  const pitGunAccRef = useRef(0);
 
   const engineHealthRef = useRef(100);
   const tireHealthRef = useRef(100);
@@ -440,41 +444,9 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
     [spline, isClosed, branches]
   );
 
-  const playStartBeep = (freq: number, durationMs: number, gainVal = 0.08) => {
-    try {
-      if (typeof window === 'undefined') return;
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (!AudioCtx) return;
-      if (!audioCtxRef.current) {
-        audioCtxRef.current = new AudioCtx();
-      }
-      const ctx = audioCtxRef.current;
-      if (ctx.state === 'suspended') {
-        void ctx.resume().catch(() => {});
-      }
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.value = freq;
-      gain.gain.setValueAtTime(gainVal, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + durationMs / 1000);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + durationMs / 1000 + 0.02);
-    } catch {
-      // Ignore Web Audio blocks when autoplay/audio policy restricts context
-    }
-  };
-
   useEffect(() => {
     return () => {
-      try {
-        audioCtxRef.current?.close();
-      } catch {
-        // Ignore close errors
-      }
-      audioCtxRef.current = null;
+      carSoundEngine.silence();
     };
   }, []);
 
@@ -484,7 +456,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
     raceStartPhaseRef.current = 'lights';
     startSeqTimerRef.current = 0;
     startLightsLitRef.current = 1;
-    playStartBeep(440, 110, 0.08);
+    carSoundEngine.playStartLightBeep(false);
   };
 
   useEffect(() => {
@@ -691,20 +663,30 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
   }, [spawnPose.pos[0], spawnPose.pos[1], spawnPose.pos[2]]);
 
   useEffect(() => {
+    const onPointerDown = () => {
+      carSoundEngine.unlock();
+    };
     const onKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       const tag = target?.tagName?.toLowerCase();
       if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
 
+      carSoundEngine.unlock();
+
       const k = e.key.toLowerCase();
       keys.current[k] = true;
+
+      if (k === 'm' && !e.repeat) {
+        toggleAudioMuted();
+        return;
+      }
 
       if (!externalRaceControlRef.current && isRaceActiveRef.current && raceStartPhaseRef.current === 'ready') {
         if (e.repeat) return;
         const isModifier =
           k === 'shift' || k === 'control' || k === 'alt' || k === 'meta' ||
           k === 'tab' || k === 'escape' || k === 'capslock' ||
-          k === 'l' || k === 'c' || /^f\d+$/.test(k);
+          k === 'l' || k === 'c' || k === 'm' || /^f\d+$/.test(k);
         if (isModifier) return;
         if (k === 'r' && e.shiftKey) {
           resetToGridStart(true);
@@ -722,9 +704,11 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
     const onKeyUp = (e: KeyboardEvent) => {
       keys.current[e.key.toLowerCase()] = false;
     };
+    window.addEventListener('pointerdown', onPointerDown, { passive: true });
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
     return () => {
+      window.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
     };
@@ -807,6 +791,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
       engineHealthRef.current = Math.max(20, engineHealthRef.current - dmg);
       lastCarCollisionTimeRef.current = now;
       lastCollisionTimeRef.current = now;
+      carSoundEngine.playImpact(Math.min(1, relSpeedKmh / 140), 'car');
       return;
     }
 
@@ -818,6 +803,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
       engineHealthRef.current = Math.max(20, engineHealthRef.current - dmg);
       lastWallCollisionTimeRef.current = now;
       lastCollisionTimeRef.current = now;
+      carSoundEngine.playImpact(Math.min(1, impactSpeed / 160), 'wall');
     }
   }, []);
 
@@ -854,7 +840,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
         raceStartPhaseRef.current = 'lights';
         startLightsLitRef.current = extLights;
         if (extLights > prevExtLightsRef.current && extLights >= 1 && extLights <= 3) {
-          playStartBeep(440, 110, 0.08);
+          carSoundEngine.playStartLightBeep(false);
         }
       } else if (extPhase === 'green' || extPhase === 'racing' || extPhase === 'finished') {
         raceStartPhaseRef.current = extPhase === 'green' ? 'green' : 'racing';
@@ -868,7 +854,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
           passedCp1Ref.current = false;
           passedCp2Ref.current = false;
           wasAtStartRef.current = true;
-          playStartBeep(880, 240, 0.10);
+          carSoundEngine.playStartLightBeep(true);
         }
       }
       prevExtPhaseRef.current = extPhase;
@@ -888,13 +874,13 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
         passedCp1Ref.current = false;
         passedCp2Ref.current = false;
         wasAtStartRef.current = true;
-        playStartBeep(880, 240, 0.10);
+        carSoundEngine.playStartLightBeep(true);
       } else if (tSeq >= 1.8 && startLightsLitRef.current < 3) {
         startLightsLitRef.current = 3;
-        playStartBeep(440, 110, 0.08);
+        carSoundEngine.playStartLightBeep(false);
       } else if (tSeq >= 0.9 && startLightsLitRef.current < 2) {
         startLightsLitRef.current = 2;
-        playStartBeep(440, 110, 0.08);
+        carSoundEngine.playStartLightBeep(false);
       }
     } else if (raceStartPhaseRef.current === 'green') {
       startSeqTimerRef.current += dt;
@@ -1170,6 +1156,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
       const dmg = Math.min(8, (speedDrop - 38) * 0.07);
       engineHealthRef.current = Math.max(20, engineHealthRef.current - dmg);
       lastCollisionTimeRef.current = nowMs;
+      carSoundEngine.playImpact(Math.min(1, speedDrop / 140), 'wall');
     }
 
     if (isHeldOnGrid) {
@@ -1382,7 +1369,8 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
         const elapsed = now - lapStartRef.current;
         if (elapsed > 3000) {
           lastLapRef.current = elapsed;
-          if (bestLapRef.current === null || elapsed < bestLapRef.current) {
+          const isNewBest = bestLapRef.current === null || elapsed < bestLapRef.current;
+          if (isNewBest) {
             bestLapRef.current = elapsed;
           }
           completedLapsRef.current += 1;
@@ -1398,6 +1386,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
             lapNumberRef.current += 1;
             lapStartRef.current = now;
           }
+          carSoundEngine.playLapChime(isNewBest, finishedRef.current);
           forceNetEmitRef.current = true;
         }
       }
@@ -1498,6 +1487,42 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
     const isFlippedNow = lastIsFlippedRef.current;
     const isHeldOnGrid = lastIsHeldOnGridRef.current;
     const recoveryNoticeActive = nowMs < recoveryNoticeUntilRef.current;
+
+    if (pitStopStatus === 'repairing') {
+      pitGunAccRef.current += visDt;
+      if (pitGunAccRef.current >= 0.68 || prevPitStatusRef.current !== 'repairing') {
+        pitGunAccRef.current = 0;
+        carSoundEngine.playPitWheelGun();
+      }
+    } else {
+      pitGunAccRef.current = 0;
+    }
+    if (pitStopStatus === 'done' && prevPitStatusRef.current !== 'done') {
+      carSoundEngine.playPitComplete();
+    }
+    prevPitStatusRef.current = pitStopStatus;
+
+    const ac = carSoundEngine.update({
+      active: isRaceActiveRef.current,
+      carClass,
+      speedKmh,
+      forwardSpeed,
+      lateralSpeed,
+      maxSpeedKmh: presetConfig.maxSpeedKmh,
+      throttle,
+      brake,
+      handbrake,
+      grounded: groundedWheels > 0,
+      surface: currentSurface,
+      tireHealth: tireHealthRef.current,
+      engineHealth: engineHealthRef.current,
+      isHeldOnGrid,
+      tunnelBlend: tunnelBlendRef.current,
+      cameraMode,
+      dt: visDt,
+    });
+    gearRef.current = ac.gear;
+    rpmNormRef.current = ac.rpmNorm;
 
     // Visual wheel spin + lock tire bottom flush with detected road surface
     wheelRollRef.current += forwardSpeed * visDt * 1.5;
@@ -1849,6 +1874,8 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
         lastPublishedBrakingRef.current = isBrakingNow;
         const payload: TelemetryData = {
           speedKmh: isHeldOnGrid ? 0 : Math.round(speedKmh),
+          gear: gearRef.current,
+          rpmNorm: rpmNormRef.current,
           throttle,
           brake,
           steer: steerRef.current,
