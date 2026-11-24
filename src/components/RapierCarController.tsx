@@ -2,7 +2,7 @@ import React, { useRef, useEffect, useMemo, useCallback } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { RigidBody, CuboidCollider, useRapier, useBeforePhysicsStep, RapierRigidBody, CollisionEnterPayload } from '@react-three/rapier';
-import { SplineNode, RoadBranch, computePitStopZones, buildSplineArcSampler, computeGridSlotPose } from '../tracks';
+import { SplineNode, RoadBranch, PitStopZonePoint, computePitStopZones, computeElectricTrackZones, buildSplineArcSampler, computeGridSlotPose } from '../tracks';
 import { bermaWidth } from '../trackCorridor';
 import { SurfaceType, SpeedPreset } from '../physics';
 import { Car3D, CarClass } from './Car3D';
@@ -40,22 +40,50 @@ const SURFACE_TIER: Record<SurfaceType, number> = {
 const ENGINE_WEAR_PER_SEC: Record<SurfaceType, number> = {
   TRACK: 0,
   CURB: 0, // White line causes 0 engine damage
-  CURB_WIDE: 0.4,
-  CURB_APEX: 0.9,
-  GRASS: 1.8,
-  SAND: 3.2,
-  GRAVEL: 4.8,
+  CURB_WIDE: 0.12,
+  CURB_APEX: 0.28,
+  GRASS: 0.65,
+  SAND: 1.15,
+  GRAVEL: 1.75,
 };
 
 const TIRE_SURFACE_WEAR_PER_SEC: Record<SurfaceType, number> = {
   TRACK: 0,
-  CURB: 0.16,
-  CURB_WIDE: 0.35,
-  CURB_APEX: 0.65,
-  GRASS: 0.80,
-  SAND: 1.25,
-  GRAVEL: 1.80,
+  CURB: 0.08,
+  CURB_WIDE: 0.16,
+  CURB_APEX: 0.30,
+  GRASS: 0.40,
+  SAND: 0.65,
+  GRAVEL: 0.90,
 };
+
+function isPointInsideZoneStrip(
+  zones: Array<{ pts: PitStopZonePoint[] }>,
+  tx: number,
+  ty: number,
+  tz: number,
+  latPad = 1.4
+): boolean {
+  for (let zi = 0; zi < zones.length; zi++) {
+    const zPts = zones[zi].pts;
+    for (let pi = 0; pi < zPts.length - 1; pi++) {
+      const a = zPts[pi];
+      const b = zPts[pi + 1];
+      const dx = b.x - a.x;
+      const dz = b.y - a.y;
+      const l2 = dx * dx + dz * dz;
+      const proj = l2 < 1e-6 ? 0 : Math.max(0, Math.min(1, ((tx - a.x) * dx + (tz - a.y) * dz) / l2));
+      const cx = a.x + proj * dx;
+      const cz = a.y + proj * dz;
+      const cy = a.z + proj * (b.z - a.z);
+      const hw = (a.width + proj * (b.width - a.width)) * 0.5;
+      if (Math.hypot(tx - cx, tz - cz) <= hw + latPad && Math.abs(ty - cy) < 3.5) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
 
 const SKID_MAX_QUADS = 2400;
 const SKID_LIFETIME_SEC = 150.0; // 2.5 minutes visible before disappearing
@@ -103,6 +131,21 @@ export const CAR_CLASS_DEFAULTS: Record<CarClass, CarTuning & { label: string; c
     secondaryColor: '#f8fafc',
     color: '#e11d48',
     desc: 'Fórmula 1 real: alta carga aerodinâmica, travagem forte e curva sobre carris',
+  },
+  fe: {
+    label: '⚡ Fórmula E',
+    maxSpeedKmh: 330,
+    accelForce: 54,
+    lateralGrip: 11.8,
+    steerRate: 2.45,
+    brakeForce: 2.05,
+    suspensionStiffness: 50,
+    suspensionDamper: 13.0,
+    suspensionTravel: 1.06,
+    primaryColor: '#06b6d4',
+    secondaryColor: '#0f172a',
+    color: '#06b6d4',
+    desc: 'Monolugar elétrico Gen3: gestão de bateria, travagem regenerativa, Attack Mode e carregamento rápido',
   },
   gt: {
     label: '🏁 GT Racing',
@@ -159,6 +202,7 @@ const CLASS_HANDLING: Record<CarClass, {
   scrubDrag: number;
 }> = {
   f1:    { baseMaxLatAccel: 30, aeroLatAccelAt300: 22, yawGripHeadroom: 1.04, offTrackGripDrop: 0.12, scrubDrag: 0.45 },
+  fe:    { baseMaxLatAccel: 26, aeroLatAccelAt300: 14, yawGripHeadroom: 1.08, offTrackGripDrop: 0.09, scrubDrag: 0.35 },
   gt:    { baseMaxLatAccel: 22, aeroLatAccelAt300: 8,  yawGripHeadroom: 1.18, offTrackGripDrop: 0.09, scrubDrag: 0.35 },
   rally: { baseMaxLatAccel: 19, aeroLatAccelAt300: 3,  yawGripHeadroom: 1.58, offTrackGripDrop: 0.04, scrubDrag: 0.22 },
   drift: { baseMaxLatAccel: 16, aeroLatAccelAt300: 2,  yawGripHeadroom: 2.15, offTrackGripDrop: 0.07, scrubDrag: 0.16 },
@@ -166,10 +210,12 @@ const CLASS_HANDLING: Record<CarClass, {
 
 interface RapierCarControllerProps {
   spline: SplineNode[];
+  controlPoints?: SplineNode[];
   isClosed?: boolean;
   isRaceActive?: boolean;
   branches?: RoadBranch[];
   pitSpline?: SplineNode[];
+  nearbyCarDotsRef?: React.RefObject<Array<{ id: string; x: number; z: number; isMe?: boolean }>>;
   groundY: number;
   cameraMode: 'chase' | 'cockpit' | 'orbit';
   speedPreset?: SpeedPreset;
@@ -204,10 +250,12 @@ const WHEEL_MOUNTS: [number, number, number][] = [
 
 export const RapierCarController: React.FC<RapierCarControllerProps> = React.memo(({
   spline,
+  controlPoints,
   isClosed = true,
   isRaceActive = true,
   branches,
   pitSpline,
+  nearbyCarDotsRef,
   groundY,
   cameraMode,
   speedPreset = 'sport',
@@ -306,6 +354,14 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
 
   const engineHealthRef = useRef(100);
   const tireHealthRef = useRef(100);
+  const batteryPctRef = useRef(100);
+  const attackModeRemainingRef = useRef(0);
+  const attackModeActiveRef = useRef(false);
+  const attackZoneCooldownRef = useRef(0);
+  const attackActivatePendingRef = useRef(false);
+  const lastIsRegeneratingRef = useRef(false);
+  const lastIsChargingRef = useRef(false);
+  const lastIsDraftingRef = useRef(false);
   const excursionEntrySpeedMsRef = useRef(0);
   const excursionMaxTierRef = useRef(0);
   const lastCollisionTimeRef = useRef(0);
@@ -440,6 +496,19 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
     [branches, pitSpline]
   );
 
+  const electricZones = useMemo(
+    () => (carClass === 'fe' ? computeElectricTrackZones(controlPoints || [], spline, isClosed, true) : []),
+    [carClass, controlPoints, spline, isClosed]
+  );
+  const attackZones = useMemo(
+    () => electricZones.filter((z) => z.kind === 'attack'),
+    [electricZones]
+  );
+  const chargeZones = useMemo(
+    () => electricZones.filter((z) => z.kind === 'charge'),
+    [electricZones]
+  );
+
   const mainArcSampler = useMemo(
     () => buildSplineArcSampler(spline, isClosed),
     [spline, isClosed]
@@ -555,7 +624,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
       bodyObj.quaternion.copy(q);
     }
     if (visualGroupRef.current) {
-      const tireBottom = carClass === 'f1' ? -0.06 : -0.02;
+      const tireBottom = carClass === 'f1' || carClass === 'fe' ? -0.06 : -0.02;
       visualGroupRef.current.position.y = -eqRideY - tireBottom + 0.005;
     }
     camPosRef.current.set(0, 0, 0);
@@ -567,6 +636,14 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
     if (resetStats) {
       engineHealthRef.current = 100;
       tireHealthRef.current = 100;
+      batteryPctRef.current = 100;
+      attackModeRemainingRef.current = 0;
+      attackModeActiveRef.current = false;
+      attackZoneCooldownRef.current = 0;
+      attackActivatePendingRef.current = false;
+      lastIsRegeneratingRef.current = false;
+      lastIsChargingRef.current = false;
+      lastIsDraftingRef.current = false;
       excursionEntrySpeedMsRef.current = 0;
       excursionMaxTierRef.current = 0;
       pitStopTimerRef.current = 0;
@@ -804,12 +881,12 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
       const otherVel = otherUserData?.vel ?? payload.other.rigidBody?.linvel?.() ?? { x: 0, y: 0, z: 0 };
       const relSpeedKmh =
         Math.hypot(lv.x - (otherVel.x || 0), lv.y - (otherVel.y || 0), lv.z - (otherVel.z || 0)) * 3.6;
-      if (relSpeedKmh < 18) return;
+      if (relSpeedKmh < 24) return;
       const dmg =
-        relSpeedKmh < 35
-          ? (relSpeedKmh - 15) * 0.08
-          : Math.min(7, 1.8 + (relSpeedKmh - 35) * 0.06);
-      engineHealthRef.current = Math.max(20, engineHealthRef.current - dmg);
+        relSpeedKmh < 45
+          ? (relSpeedKmh - 20) * 0.04
+          : Math.min(3.5, 1.0 + (relSpeedKmh - 45) * 0.03);
+      engineHealthRef.current = Math.max(35, engineHealthRef.current - dmg);
       lastCarCollisionTimeRef.current = now;
       lastCollisionTimeRef.current = now;
       carSoundEngine.playImpact(Math.min(1, relSpeedKmh / 140), 'car');
@@ -819,9 +896,9 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
     if (now - lastWallCollisionTimeRef.current < 850) return;
     const currentSpeed = Math.hypot(lv.x, lv.y, lv.z) * 3.6;
     const impactSpeed = Math.max(prevSpeedKmhRef.current, currentSpeed);
-    if (impactSpeed >= 25) {
-      const dmg = Math.min(12, Math.max(1.5, (impactSpeed - 20) * 0.065));
-      engineHealthRef.current = Math.max(20, engineHealthRef.current - dmg);
+    if (impactSpeed >= 32) {
+      const dmg = Math.min(5.5, Math.max(0.8, (impactSpeed - 28) * 0.032));
+      engineHealthRef.current = Math.max(35, engineHealthRef.current - dmg);
       lastWallCollisionTimeRef.current = now;
       lastCollisionTimeRef.current = now;
       carSoundEngine.playImpact(Math.min(1, impactSpeed / 160), 'wall');
@@ -1149,11 +1226,97 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
 
     // Backup sudden-deceleration impact check (e.g. heavy wall scrape without CollisionEnter)
     const speedDrop = prevSpeedKmhRef.current - speedKmh;
-    if (!isHeldOnGrid && speedDrop > 45 && brake === 0 && !handbrake && nowMs - lastCollisionTimeRef.current >= 900) {
-      const dmg = Math.min(8, (speedDrop - 38) * 0.07);
-      engineHealthRef.current = Math.max(20, engineHealthRef.current - dmg);
+    if (!isHeldOnGrid && speedDrop > 55 && brake === 0 && !handbrake && nowMs - lastCollisionTimeRef.current >= 900) {
+      const dmg = Math.min(3.5, (speedDrop - 48) * 0.035);
+      engineHealthRef.current = Math.max(35, engineHealthRef.current - dmg);
       lastCollisionTimeRef.current = nowMs;
       carSoundEngine.playImpact(Math.min(1, speedDrop / 140), 'wall');
+    }
+
+    // Formula E Energy, Regen, Slipstream, Attack Zone & Charge Zone updates
+    let feSpeedMult = 1.0;
+    let feAccelMult = 1.0;
+    let feGripMult = 1.0;
+    if (carClass === 'fe' && !isHeldOnGrid) {
+      const inAttackZone =
+        attackZones.length > 0 && isPointInsideZoneStrip(attackZones, t.x, t.y, t.z, 1.4);
+      const inChargeZone =
+        chargeZones.length > 0 && isPointInsideZoneStrip(chargeZones, t.x, t.y, t.z, 1.4);
+
+      if (attackZoneCooldownRef.current > 0) {
+        attackZoneCooldownRef.current = Math.max(0, attackZoneCooldownRef.current - dt);
+      }
+      if (inAttackZone && attackZoneCooldownRef.current <= 0) {
+        attackModeRemainingRef.current = 10.0;
+        attackZoneCooldownRef.current = 1.8;
+        attackActivatePendingRef.current = true;
+      } else if (attackModeRemainingRef.current > 0) {
+        attackModeRemainingRef.current = Math.max(0, attackModeRemainingRef.current - dt);
+      }
+      const attackActive = attackModeRemainingRef.current > 0;
+
+      let isDrafting = false;
+      const dots = nearbyCarDotsRef?.current;
+      if (dots && speedKmh > 70) {
+        for (let di = 0; di < dots.length; di++) {
+          const d = dots[di];
+          if (d.isMe) continue;
+          const dx = d.x - t.x;
+          const dz = d.z - t.z;
+          const fwdDist = dx * tmpForward.x + dz * tmpForward.z;
+          const latDist = Math.abs(dx * tmpRight.x + dz * tmpRight.z);
+          if (fwdDist >= 4 && fwdDist <= 28 && latDist <= 3.8) {
+            isDrafting = true;
+            break;
+          }
+        }
+      }
+
+      let isCharging = false;
+      let isRegenerating = false;
+      if (inChargeZone) {
+        batteryPctRef.current = Math.min(100, batteryPctRef.current + 14.0 * dt);
+        isCharging = true;
+      } else if (throttle > 0.08) {
+        const speedNorm = Math.max(0, Math.min(1, speedKmh / presetConfig.maxSpeedKmh));
+        const drain =
+          2.25 *
+          throttle *
+          (0.45 + 0.55 * speedNorm) *
+          (attackActive ? 1.25 : 1.0) *
+          (isDrafting ? 0.55 : 1.0) *
+          dt;
+        batteryPctRef.current = Math.max(0, batteryPctRef.current - drain);
+      }
+
+      if (!inChargeZone && speedKmh > 25) {
+        if (brake > 0.08) {
+          batteryPctRef.current = Math.min(
+            100,
+            batteryPctRef.current + 3.4 * brake * Math.min(1, speedKmh / 140) * dt
+          );
+          isRegenerating = true;
+        } else if (throttle < 0.05 && speedKmh > 55) {
+          batteryPctRef.current = Math.min(
+            100,
+            batteryPctRef.current + 1.1 * Math.min(1, speedKmh / 180) * dt
+          );
+          isRegenerating = true;
+        }
+      }
+
+      lastIsChargingRef.current = isCharging;
+      lastIsRegeneratingRef.current = isRegenerating;
+      lastIsDraftingRef.current = isDrafting;
+
+      const ecoMult = batteryPctRef.current <= 0.5 ? 0.55 : 1.0;
+      feSpeedMult = ecoMult * (attackActive ? 1.14 : 1.0) * (isDrafting ? 1.04 : 1.0);
+      feAccelMult = ecoMult * (attackActive ? 1.22 : 1.0);
+      feGripMult = attackActive ? 1.12 : 1.0;
+    } else {
+      lastIsChargingRef.current = false;
+      lastIsRegeneratingRef.current = false;
+      lastIsDraftingRef.current = false;
     }
 
     if (isHeldOnGrid) {
@@ -1174,12 +1337,12 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
       // Project forward along road plane so car climbs steep hills cleanly!
       tmpRoadForward.copy(tmpForward).addScaledVector(tmpAvgNormal, -tmpForward.dot(tmpAvgNormal)).normalize();
 
-      // Mechanical wear updates (engine + tires, clamped at 20% minimum)
+      // Mechanical wear updates (engine floored at 35%, tires at 20%)
       if (speedKmh > 3) {
         const speedNorm = Math.min(1.2, speedKmh / 50);
         const engineWear = ENGINE_WEAR_PER_SEC[currentSurface] * speedNorm;
         if (engineWear > 0) {
-          engineHealthRef.current = Math.max(20, engineHealthRef.current - engineWear * dt);
+          engineHealthRef.current = Math.max(35, engineHealthRef.current - engineWear * dt);
         }
 
         const isDriftOrRally = carClass === 'rally' || carClass === 'drift';
@@ -1187,31 +1350,31 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
         const slipTireScale = isDriftOrRally ? 0.55 : 1.0;
 
         let tireWear = currentSurface === 'TRACK'
-          ? 0.05 * Math.min(1.5, speedKmh / 200)
+          ? 0.025 * Math.min(1.5, speedKmh / 200)
           : TIRE_SURFACE_WEAR_PER_SEC[currentSurface] * speedNorm * offTrackTireScale;
         if (brake > 0.15 && forwardSpeed > 5) {
-          tireWear += 0.55 * brake * Math.min(1.5, speedKmh / 140);
+          tireWear += 0.32 * brake * Math.min(1.5, speedKmh / 140);
         }
         if (absLat > 5.5) {
-          tireWear += 0.90 * Math.min(1.8, (absLat - 5.5) / 10) * slipTireScale;
+          tireWear += 0.50 * Math.min(1.8, (absLat - 5.5) / 10) * slipTireScale;
         }
         if (handbrake && speedKmh > 15) {
-          tireWear += 0.70 * slipTireScale;
+          tireWear += 0.40 * slipTireScale;
         }
         tireHealthRef.current = Math.max(20, tireHealthRef.current - tireWear * dt);
       }
 
-      const engineSpeedMult = 0.25 + 0.75 * (engineHealthRef.current / 100);
-      const engineAccelMult = 0.45 + 0.55 * (engineHealthRef.current / 100);
+      const engineSpeedMult = 0.45 + 0.55 * (engineHealthRef.current / 100);
+      const engineAccelMult = 0.60 + 0.40 * (engineHealthRef.current / 100);
       const tireGripMult = 0.40 + 0.60 * (tireHealthRef.current / 100);
       const tireBrakeMult = 0.55 + 0.45 * (tireHealthRef.current / 100);
       const tireWornT = tireHealthRef.current < 45 ? Math.min(1, (45 - tireHealthRef.current) / 25) : 0;
       const tireTopSpeedMult = 1.0 - 0.30 * tireWornT; // At 20% tires, wheelspin caps top speed to 70%
       const tireAccelMult = 1.0 - 0.28 * tireWornT;
-      const effectiveMaxSpeedKmh = presetConfig.maxSpeedKmh * engineSpeedMult * tireTopSpeedMult;
+      const effectiveMaxSpeedKmh = presetConfig.maxSpeedKmh * engineSpeedMult * tireTopSpeedMult * feSpeedMult;
       const effectiveMaxSpeedMs = effectiveMaxSpeedKmh / 3.6;
 
-      // Off-track speed penalty: -10% per layer from White (-10%) through Gravel (-60%)
+      // Off-track speed penalty: -5% per layer from White (-5%) through Gravel (-30%)
       let activeCapMs = effectiveMaxSpeedMs;
       if (currentTier === 0) {
         excursionMaxTierRef.current = 0;
@@ -1223,9 +1386,9 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
         if (currentTier > excursionMaxTierRef.current) {
           excursionMaxTierRef.current = currentTier;
         }
-        const penaltyFactor = 1.0 - 0.10 * currentTier;
+        const penaltyFactor = 1.0 - 0.05 * currentTier;
         const surfaceMaxMs = effectiveMaxSpeedMs * penaltyFactor;
-        const entryTargetMs = excursionEntrySpeedMsRef.current * (1.0 - 0.10 * excursionMaxTierRef.current);
+        const entryTargetMs = excursionEntrySpeedMsRef.current * (1.0 - 0.05 * excursionMaxTierRef.current);
         activeCapMs = excursionEntrySpeedMsRef.current > 8 ? Math.min(surfaceMaxMs, entryTargetMs) : surfaceMaxMs;
       }
 
@@ -1242,7 +1405,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
         }
       } else {
         if (throttle > 0) {
-          const maxDriveAccel = throttle * presetConfig.accelForce * engineAccelMult * tireAccelMult;
+          const maxDriveAccel = throttle * presetConfig.accelForce * engineAccelMult * tireAccelMult * feAccelMult;
           if (forwardSpeed < activeCapMs) {
             const capAccel = Math.max(0, (activeCapMs - forwardSpeed) * 6.0 + Math.max(0, forwardSpeed) * 0.25);
             driveAccel = Math.min(maxDriveAccel, capAccel);
@@ -1275,6 +1438,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
         (handling.baseMaxLatAccel + handling.aeroLatAccelAt300 * aeroSpeedRatio * aeroSpeedRatio) *
         tireGripMult *
         surfaceGripMult *
+        feGripMult *
         (handbrake ? 0.50 : 1.0);
 
       // Induced scrub drag when sliding laterally
@@ -1283,7 +1447,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
       }
 
       // Lateral tire grip capped by class mechanical + aerodynamic friction limit
-      const baseGrip = (handbrake ? presetConfig.lateralGrip * 0.35 : presetConfig.lateralGrip) * tireGripMult;
+      const baseGrip = (handbrake ? presetConfig.lateralGrip * 0.35 : presetConfig.lateralGrip) * tireGripMult * feGripMult;
       const activeGrip = baseGrip * surfaceGripMult;
       const rawLatAccel = -lateralSpeed * activeGrip;
       const clampedLatAccel = Math.max(-maxLatAccel, Math.min(maxLatAccel, rawLatAccel));
@@ -1390,41 +1554,31 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
       wasAtStartRef.current = nearStart;
     }
 
-    // Pit-Stop 50m Yellow Box Detection & 3-second Repair Countdown
-    let inPitBoxZone = false;
-    for (let zi = 0; zi < pitStopZones.length && !inPitBoxZone; zi++) {
-      const zPts = pitStopZones[zi].pts;
-      for (let pi = 0; pi < zPts.length - 1; pi++) {
-        const a = zPts[pi];
-        const b = zPts[pi + 1];
-        const dx = b.x - a.x;
-        const dz = b.y - a.y;
-        const l2 = dx * dx + dz * dz;
-        const proj = l2 < 1e-6 ? 0 : Math.max(0, Math.min(1, ((t.x - a.x) * dx + (t.z - a.y) * dz) / l2));
-        const cx = a.x + proj * dx;
-        const cz = a.y + proj * dz;
-        const cy = a.z + proj * (b.z - a.z);
-        const hw = (a.width + proj * (b.width - a.width)) * 0.5;
-        if (Math.hypot(t.x - cx, t.z - cz) <= hw + 1.5 && Math.abs(t.y - cy) < 3.5) {
-          inPitBoxZone = true;
-          break;
-        }
-      }
-    }
+    // Pit-Stop 50m Yellow Box Detection & 3-second Repair / Pit Boost Countdown
+    const inPitBoxZone =
+      pitStopZones.length > 0 && isPointInsideZoneStrip(pitStopZones, t.x, t.y, t.z, 1.5);
 
     let pitStopStatus: PitStopStatus = 'none';
     if (nowMs < pitStopDoneUntilRef.current) {
       pitStopStatus = 'done';
     } else if (inPitBoxZone) {
-      if (engineHealthRef.current >= 99.9 && tireHealthRef.current >= 99.9) {
+      const needsPit =
+        engineHealthRef.current < 99.9 ||
+        tireHealthRef.current < 99.9 ||
+        (carClass === 'fe' && batteryPctRef.current < 99.5);
+      if (!needsPit) {
         pitStopTimerRef.current = 0;
         pitStopStatus = 'full';
       } else if (speedKmh < 4.5) {
         pitStopTimerRef.current += dt;
         pitStopStatus = 'repairing';
+        if (carClass === 'fe') {
+          batteryPctRef.current = Math.min(100, batteryPctRef.current + 36 * dt);
+        }
         if (pitStopTimerRef.current >= 3.0) {
           engineHealthRef.current = 100;
           tireHealthRef.current = 100;
+          if (carClass === 'fe') batteryPctRef.current = 100;
           pitStopTimerRef.current = 0;
           pitStopDoneUntilRef.current = nowMs + 2500;
           pitStopStatus = 'done';
@@ -1499,6 +1653,15 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
     }
     prevPitStatusRef.current = pitStopStatus;
 
+    attackModeActiveRef.current = carClass === 'fe' && attackModeRemainingRef.current > 0;
+    if (attackActivatePendingRef.current) {
+      attackActivatePendingRef.current = false;
+      carSoundEngine.playAttackModeActivate();
+    }
+    if (carClass === 'fe' && lastIsChargingRef.current) {
+      carSoundEngine.playChargePulse();
+    }
+
     const ac = carSoundEngine.update({
       active: isRaceActiveRef.current,
       carClass,
@@ -1517,6 +1680,8 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
       tunnelBlend: tunnelBlendRef.current,
       cameraMode,
       dt: visDt,
+      isRegenerating: lastIsRegeneratingRef.current,
+      attackModeActive: attackModeActiveRef.current,
     });
     gearRef.current = ac.gear;
     rpmNormRef.current = ac.rpmNorm;
@@ -1524,7 +1689,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
     // Visual wheel spin + lock tire bottom flush with detected road surface
     wheelRollRef.current += forwardSpeed * visDt * 1.5;
     if (visualGroupRef.current) {
-      const tireBottom = carClass === 'f1' ? -0.06 : -0.02;
+      const tireBottom = carClass === 'f1' || carClass === 'fe' ? -0.06 : -0.02;
       if (groundedWheels > 0) {
         const avgToi = sumHitToi / groundedWheels;
         const groundLocalY = WHEEL_RAY_ORIGIN_Y - avgToi;
@@ -1543,7 +1708,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
     if (physicsSteppedRef.current) {
       physicsSteppedRef.current = false;
       let skidDirty = false;
-      const skidHalfW = carClass === 'f1' ? 0.24 : 0.165;
+      const skidHalfW = carClass === 'f1' || carClass === 'fe' ? 0.24 : 0.165;
       const absLat = Math.abs(lateralSpeed);
       const isBaldSpin = !isHeldOnGrid && tireHealthRef.current < 38 && throttle > 0.65 && speedKmh > 20;
       const isHeavyBrake = !isHeldOnGrid && brake > 0.65 && forwardSpeed > 12;
@@ -1829,6 +1994,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
         wheelRoll: wheelRollRef.current,
         braking: isBrakingNow,
         headlights: headlightsOnRef.current,
+        attackModeActive: attackModeActiveRef.current,
         lapNumber: lapNumberRef.current,
         completedLaps: completedLapsRef.current,
         trackS: prevTrackSRef.current,
@@ -1879,7 +2045,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
           headlightsOn: headlightsOnRef.current,
           isBraking: isBrakingNow,
           surface: currentSurface,
-          surfacePenaltyPct: currentTier * 10,
+          surfacePenaltyPct: currentTier * 5,
           engineHealth: engineHealthRef.current,
           tireHealth: tireHealthRef.current,
           inPitLane: inPitBoxZone,
@@ -1895,6 +2061,12 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
           lapTimeMs: isHeldOnGrid ? 0 : Math.max(0, nowMs - lapStartRef.current),
           bestLapMs: bestLapRef.current,
           lastLapMs: lastLapRef.current,
+          isElectric: carClass === 'fe',
+          batteryPct: batteryPctRef.current,
+          attackModeRemainingSec: attackModeRemainingRef.current,
+          isRegenerating: lastIsRegeneratingRef.current,
+          isCharging: lastIsChargingRef.current,
+          isDrafting: lastIsDraftingRef.current,
         };
         publishTelemetry(payload);
         if (onTelemetry) onTelemetry(payload);
@@ -1937,6 +2109,7 @@ export const RapierCarController: React.FC<RapierCarControllerProps> = React.mem
             wheelRotationRef={wheelRollRef}
             brakeIntensityRef={brakeLightRef}
             headlightsOn={headlightsOn}
+            attackModeActiveRef={attackModeActiveRef}
             enableRealLights={true}
             environmentTheme={environmentTheme}
             color={presetConfig.primaryColor}

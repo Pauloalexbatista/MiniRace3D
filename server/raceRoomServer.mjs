@@ -4,8 +4,8 @@ import path from 'path';
 import crypto from 'crypto';
 
 const ATTACHED_SYM = Symbol.for('minirace3d.raceRoomServerAttached');
-const VALID_CAR_CLASSES = ['f1', 'gt', 'rally', 'drift'];
-const VALID_CATEGORIES = ['f1', 'gt', 'rally', 'drift', 'open'];
+const VALID_CAR_CLASSES = ['f1', 'fe', 'gt', 'rally', 'drift'];
+const VALID_CATEGORIES = ['f1', 'fe', 'gt', 'rally', 'drift', 'open'];
 const VALID_SPEED_PRESETS = ['calm', 'sport', 'extreme'];
 const VALID_ENV_THEMES = ['day', 'sunset', 'night'];
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -1071,6 +1071,7 @@ export function attachRaceRoomServer(httpServer, { circuitsDir } = {}) {
         wheelRoll: Number(msg.wheelRoll) || 0,
         braking: Boolean(msg.braking),
         headlights: msg.headlights !== undefined ? Boolean(msg.headlights) : true,
+        attackModeActive: Boolean(msg.attackModeActive),
         lapNumber: clampInt(msg.lapNumber, 1, 99, player.lapNumber),
         completedLaps: clampInt(msg.completedLaps, 0, 99, player.completedLaps),
         trackS: Number(msg.trackS) || 0,

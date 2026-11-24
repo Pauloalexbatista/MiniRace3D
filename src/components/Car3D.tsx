@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 
-export type CarClass = 'f1' | 'gt' | 'rally' | 'drift';
+export type CarClass = 'f1' | 'fe' | 'gt' | 'rally' | 'drift';
 
 let cachedCarbonTex: THREE.DataTexture | null = null;
 function getCarbonWeaveTexture(): THREE.DataTexture {
@@ -83,8 +83,20 @@ const CarWheel = React.memo<CarWheelProps>(({
   wheelRotation = 0,
 }) => {
   const isF1 = carClass === 'f1';
-  const tireWidth = isF1 ? (isFront ? 0.72 : 0.90) : carClass === 'drift' ? 0.42 : 0.38;
-  const tireRadius = isF1 ? 0.62 : 0.44;
+  const isFE = carClass === 'fe';
+  const isOpenWheel = isF1 || isFE;
+  const tireWidth = isF1
+    ? isFront
+      ? 0.72
+      : 0.90
+    : isFE
+    ? isFront
+      ? 0.58
+      : 0.72
+    : carClass === 'drift'
+    ? 0.42
+    : 0.38;
+  const tireRadius = isF1 ? 0.62 : isFE ? 0.58 : 0.44;
   const camber = carClass === 'drift' ? side * -0.08 : 0;
 
   return (
@@ -113,8 +125,8 @@ const CarWheel = React.memo<CarWheelProps>(({
             <meshStandardMaterial color="#18181b" roughness={0.88} />
           </mesh>
         ))}
-        {/* Pirelli-style colored compound ring on F1 outer sidewall */}
-        {isF1 && (
+        {/* Pirelli-style colored compound ring on open-wheel outer sidewall */}
+        {isOpenWheel && (
           <mesh position={[side * (tireWidth * 0.445), 0, 0]} rotation={[0, Math.PI / 2, 0]}>
             <ringGeometry args={[tireRadius * 0.74, tireRadius * 0.81, 24]} />
             <meshStandardMaterial color={rimColor} roughness={0.35} side={THREE.DoubleSide} />
@@ -155,7 +167,7 @@ const CarWheel = React.memo<CarWheelProps>(({
         {/* Center Lock Nut */}
         <mesh rotation={[0, 0, Math.PI / 2]}>
           <cylinderGeometry args={[tireRadius * 0.18, tireRadius * 0.18, tireWidth + 0.045, 12]} />
-          <meshStandardMaterial color={isF1 ? '#ef4444' : '#e2e8f0'} roughness={0.2} metalness={0.9} />
+          <meshStandardMaterial color={isFE ? '#06b6d4' : isF1 ? '#ef4444' : '#e2e8f0'} roughness={0.2} metalness={0.9} />
         </mesh>
       </group>
     </group>
@@ -206,6 +218,8 @@ interface Car3DProps {
   secondaryColor?: string;
   carClass?: CarClass;
   isDrifting?: boolean;
+  attackModeActive?: boolean;
+  attackModeActiveRef?: React.RefObject<boolean>;
 }
 
 function makeBeamGeo(rStart: number, rEnd: number, length: number): THREE.CylinderGeometry {
@@ -286,6 +300,8 @@ export const Car3D = React.memo(React.forwardRef<THREE.Group, Car3DProps>(({
   color = '#e11d48',
   secondaryColor = '#f8fafc',
   carClass = 'f1',
+  attackModeActive = false,
+  attackModeActiveRef,
 }, ref) => {
   const frontLeftWheelRef = useRef<THREE.Group>(null);
   const frontRightWheelRef = useRef<THREE.Group>(null);
@@ -327,6 +343,14 @@ export const Car3D = React.memo(React.forwardRef<THREE.Group, Car3DProps>(({
         hlOn: new THREE.Color('#e0f2fe'),
         hlEmissive: new THREE.Color('#38bdf8'),
         spotHex: '#e0f2fe',
+      };
+    }
+    if (carClass === 'fe') {
+      return {
+        hlOff: new THREE.Color('#1e293b'),
+        hlOn: new THREE.Color('#ecfeff'),
+        hlEmissive: new THREE.Color('#67e8f9'),
+        spotHex: '#ecfeff',
       };
     }
     if (carClass === 'f1') {
@@ -452,6 +476,16 @@ export const Car3D = React.memo(React.forwardRef<THREE.Group, Car3DProps>(({
       side: THREE.DoubleSide,
       toneMapped: false,
     });
+    const feHaloLedMat = new THREE.MeshStandardMaterial({
+      color: '#06b6d4',
+      emissive: '#06b6d4',
+      emissiveIntensity: 1.2,
+      roughness: 0.15,
+      metalness: 0.3,
+      toneMapped: false,
+    });
+    const feNormalColor = new THREE.Color('#06b6d4');
+    const feAttackColor = new THREE.Color('#e879f9');
 
     return {
       headlightMat,
@@ -481,6 +515,9 @@ export const Car3D = React.memo(React.forwardRef<THREE.Group, Car3DProps>(({
       rotorColdColor,
       rotorHotColor,
       exhaustFlameMat,
+      feHaloLedMat,
+      feNormalColor,
+      feAttackColor,
     };
   }, []);
 
@@ -502,10 +539,11 @@ export const Car3D = React.memo(React.forwardRef<THREE.Group, Car3DProps>(({
       lightAssets.rallyRoofBeamMat.dispose();
       lightAssets.rotorMat.dispose();
       lightAssets.exhaustFlameMat.dispose();
+      lightAssets.feHaloLedMat.dispose();
     };
   }, [lightAssets]);
 
-  useFrame((_, delta) => {
+  useFrame((state, delta) => {
     const steer = steerAngleRef ? steerAngleRef.current : steerAngle;
     const spin = wheelRotationRef ? wheelRotationRef.current : wheelRotation;
     if (frontLeftWheelRef.current) frontLeftWheelRef.current.rotation.y = steer;
@@ -608,6 +646,19 @@ export const Car3D = React.memo(React.forwardRef<THREE.Group, Car3DProps>(({
     } else {
       lightAssets.exhaustFlameMat.opacity = 0;
       if (exhaustFlamesGroupRef.current) exhaustFlamesGroupRef.current.visible = false;
+    }
+
+    // 7. Formula E Halo & Energy Strip Attack Mode LED animation
+    const isAttack = Boolean(attackModeActiveRef?.current ?? attackModeActive);
+    if (isAttack) {
+      const pulse = 3.0 + 0.5 * Math.sin(state.clock.elapsedTime * 14);
+      lightAssets.feHaloLedMat.color.copy(lightAssets.feAttackColor);
+      lightAssets.feHaloLedMat.emissive.copy(lightAssets.feAttackColor);
+      lightAssets.feHaloLedMat.emissiveIntensity = pulse;
+    } else {
+      lightAssets.feHaloLedMat.color.copy(lightAssets.feNormalColor);
+      lightAssets.feHaloLedMat.emissive.copy(lightAssets.feNormalColor);
+      lightAssets.feHaloLedMat.emissiveIntensity = 1.2;
     }
   });
 
@@ -859,8 +910,12 @@ export const Car3D = React.memo(React.forwardRef<THREE.Group, Car3DProps>(({
   const shadowTex = useMemo(() => getContactShadowTexture(), []);
 
   const isF1 = carClass === 'f1';
+  const isFE = carClass === 'fe';
+  const isOpenWheel = isF1 || isFE;
   const rimColor =
-    carClass === 'f1'
+    carClass === 'fe'
+      ? '#06b6d4'
+      : carClass === 'f1'
       ? '#ef4444'
       : carClass === 'rally'
       ? '#f8fafc'
@@ -868,14 +923,14 @@ export const Car3D = React.memo(React.forwardRef<THREE.Group, Car3DProps>(({
       ? '#fbbf24'
       : '#cbd5e1';
 
-  const wheelY = isF1 ? 0.56 : 0.42;
-  const wheelX = isF1 ? 1.08 : 0.98;
+  const wheelY = isF1 ? 0.56 : isFE ? 0.52 : 0.42;
+  const wheelX = isOpenWheel ? 1.08 : 0.98;
 
   return (
     <group ref={ref} position={position} rotation={rotation}>
       {/* Soft Underbody Contact Shadow */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.045, -0.05]} renderOrder={1}>
-        <planeGeometry args={[isF1 ? 2.65 : 2.45, isF1 ? 5.1 : 4.85]} />
+        <planeGeometry args={[isOpenWheel ? 2.65 : 2.45, isOpenWheel ? 5.1 : 4.85]} />
         <meshBasicMaterial
           map={shadowTex}
           transparent
@@ -1204,6 +1259,214 @@ export const Car3D = React.memo(React.forwardRef<THREE.Group, Car3DProps>(({
                 key={`f1_bfl_${i}`}
                 position={[ex, 0.60, -2.33]}
                 scale={[0.42, 0.68, 1]}
+                geometry={lightAssets.flarePlaneGeo}
+                material={lightAssets.brakeFlareMat}
+              />
+            ))}
+          </group>
+        </group>
+      ) : isFE ? (
+        /* ========================================================= */
+        /* ⚡ FÓRMULA E - GEN3 EVO FUTURISTIC ELECTRIC RACER          */
+        /* ========================================================= */
+        <group position={[0, 0.40, 0]}>
+          {/* 1. Carbon Venturi Floor */}
+          <mesh position={[0, -0.14, 0.02]} castShadow receiveShadow>
+            <boxGeometry args={[1.86, 0.05, 4.10]} />
+            <meshStandardMaterial color="#ffffff" map={carbonTex} roughness={0.38} metalness={0.42} />
+          </mesh>
+          {[-0.90, 0.90].map((sx, i) => (
+            <mesh key={`fe_edge_${i}`} position={[sx, -0.10, -0.08]} castShadow>
+              <boxGeometry args={[0.05, 0.07, 3.05]} />
+              <meshStandardMaterial color="#ffffff" map={carbonTex} roughness={0.32} metalness={0.5} />
+            </mesh>
+          ))}
+
+          {/* 2. Sculpted Monocoque & Wedge Nose */}
+          <mesh geometry={sculptedGeos.f1Body} castShadow receiveShadow>
+            <meshPhysicalMaterial color={color} roughness={0.14} metalness={0.40} clearcoat={1.0} clearcoatRoughness={0.06} />
+          </mesh>
+          <mesh geometry={sculptedGeos.f1Nose} castShadow receiveShadow>
+            <meshPhysicalMaterial color={color} roughness={0.14} metalness={0.40} clearcoat={1.0} clearcoatRoughness={0.06} />
+          </mesh>
+
+          {/* Nose & Front Wing LED Lamps */}
+          {[-0.25, 0.25].map((nx, i) => (
+            <mesh key={`fe_nl_${i}`} position={[nx, 0.11, 1.68]} material={lightAssets.headlightMat}>
+              <boxGeometry args={[0.08, 0.06, 0.30]} />
+            </mesh>
+          ))}
+          {[-0.90, 0.90].map((wx, i) => (
+            <mesh key={`fe_wl_${i}`} position={[wx, -0.05, 2.58]} material={lightAssets.headlightMat}>
+              <boxGeometry args={[0.18, 0.05, 0.06]} />
+            </mesh>
+          ))}
+          <group ref={frontLightEffectsGroupRef}>
+            {[-0.27, 0.27].map((nx, i) => (
+              <mesh
+                key={`fe_nfl_${i}`}
+                position={[nx, 0.11, 1.85]}
+                scale={[0.38, 0.32, 1]}
+                geometry={lightAssets.flarePlaneGeo}
+                material={lightAssets.headlightFlareMat}
+              />
+            ))}
+            {[-0.90, 0.90].map((wx, i) => (
+              <mesh
+                key={`fe_wfl_${i}`}
+                position={[wx, -0.05, 2.64]}
+                scale={[0.50, 0.36, 1]}
+                geometry={lightAssets.flarePlaneGeo}
+                material={lightAssets.headlightFlareMat}
+              />
+            ))}
+            {[-0.86, 0.86].map((bx, i) => (
+              <mesh
+                key={`fe_bm_${i}`}
+                position={[bx, -0.05, 2.63]}
+                rotation={[0.04, bx < 0 ? 0.03 : -0.03, 0]}
+                geometry={lightAssets.mainBeamGeo}
+                material={lightAssets.mainBeamMat}
+              />
+            ))}
+          </group>
+
+          {/* 3. Gen3 Evo Swept Front Wing + Enclosed Aero Fairings */}
+          <group position={[0, -0.15, 2.52]}>
+            <mesh castShadow>
+              <boxGeometry args={[2.14, 0.045, 0.48]} />
+              <meshStandardMaterial color="#ffffff" map={carbonTex} roughness={0.35} metalness={0.42} />
+            </mesh>
+            <mesh position={[0, 0.045, -0.05]} rotation={[-0.18, 0, 0]} castShadow>
+              <boxGeometry args={[2.06, 0.035, 0.26]} />
+              <meshPhysicalMaterial color={color} roughness={0.14} metalness={0.42} clearcoat={1.0} clearcoatRoughness={0.06} />
+            </mesh>
+            {[-1.06, 1.06].map((ex, i) => (
+              <mesh key={`fe_fw_ep_${i}`} position={[ex, 0.15, -0.02]} rotation={[0, 0, ex < 0 ? 0.14 : -0.14]} castShadow>
+                <boxGeometry args={[0.05, 0.32, 0.58]} />
+                <meshPhysicalMaterial color={secondaryColor} roughness={0.16} metalness={0.45} clearcoat={1.0} />
+              </mesh>
+            ))}
+          </group>
+          {/* Sleek Front Wheel Aero Fairing Shields */}
+          {[-0.96, 0.96].map((fx, i) => (
+            <mesh key={`fe_fair_${i}`} position={[fx, 0.32, 1.24]} rotation={[0.15, fx < 0 ? 0.08 : -0.08, 0]} castShadow>
+              <boxGeometry args={[0.14, 0.38, 0.62]} />
+              <meshPhysicalMaterial color={color} roughness={0.16} metalness={0.4} clearcoat={1.0} />
+            </mesh>
+          ))}
+
+          {/* 4. Sculpted Electric Sidepods + Glowing LED Energy Strips */}
+          {[-1, 1].map((s) => (
+            <group key={`fe_sp_${s}`} position={[s * 0.64, 0.02, 0]}>
+              <mesh geometry={sculptedGeos.f1Sidepod} rotation={[0, s * -0.05, 0]} castShadow receiveShadow>
+                <meshPhysicalMaterial color={color} roughness={0.14} metalness={0.40} clearcoat={1.0} clearcoatRoughness={0.06} />
+              </mesh>
+              <mesh position={[s * 0.24, 0.13, -0.04]} rotation={[0.08, s * -0.05, 0]} material={lightAssets.feHaloLedMat}>
+                <boxGeometry args={[0.032, 0.065, 1.90]} />
+              </mesh>
+              <mesh position={[s * 0.02, 0.30, 0.64]}>
+                <boxGeometry args={[0.20, 0.025, 0.05]} />
+                <meshStandardMaterial color="#ffffff" map={carbonTex} roughness={0.4} />
+              </mesh>
+              <mesh position={[s * 0.08, 0.34, 0.64]} castShadow>
+                <boxGeometry args={[0.16, 0.075, 0.10]} />
+                <meshPhysicalMaterial color={secondaryColor} roughness={0.16} clearcoat={1.0} />
+              </mesh>
+            </group>
+          ))}
+
+          {/* 5. Cockpit + Helmet + Illuminated Attack-Mode Halo LED */}
+          <mesh position={[0, 0.35, 0.22]}>
+            <boxGeometry args={[0.56, 0.16, 0.98]} />
+            <meshStandardMaterial color="#020617" roughness={0.9} />
+          </mesh>
+          <mesh position={[0, 0.52, 0.10]} castShadow>
+            <sphereGeometry args={[0.21, 20, 20]} />
+            <meshPhysicalMaterial color="#38bdf8" roughness={0.12} metalness={0.55} clearcoat={1.0} clearcoatRoughness={0.05} />
+          </mesh>
+          <mesh position={[0, 0.54, 0.26]}>
+            <boxGeometry args={[0.26, 0.09, 0.12]} />
+            <meshPhysicalMaterial color="#070b14" roughness={0.04} metalness={0.22} clearcoat={1.0} clearcoatRoughness={0.03} />
+          </mesh>
+          <mesh position={[0, 0.55, 0.54]} rotation={[0.45, 0, 0]} material={lightAssets.feHaloLedMat}>
+            <cylinderGeometry args={[0.034, 0.040, 0.30, 10]} />
+          </mesh>
+          <mesh position={[0, 0.64, 0.20]} rotation={[Math.PI / 2, 0, 0]} material={lightAssets.feHaloLedMat}>
+            <torusGeometry args={[0.32, 0.046, 10, 24, Math.PI * 1.15]} />
+          </mesh>
+
+          {/* 6. Clean Electric Engine Cover + Shark Fin + T-Cam (Zero Exhaust) */}
+          <mesh position={[0, 0.53, -0.52]} rotation={[-0.14, 0, 0]} castShadow>
+            <boxGeometry args={[0.38, 0.30, 0.96]} />
+            <meshPhysicalMaterial color={color} roughness={0.14} metalness={0.40} clearcoat={1.0} />
+          </mesh>
+          <mesh position={[0, 0.78, -0.18]}>
+            <boxGeometry args={[0.26, 0.04, 0.08]} />
+            <meshStandardMaterial color="#06b6d4" emissive="#06b6d4" emissiveIntensity={0.8} />
+          </mesh>
+          <mesh position={[0, 0.60, -1.16]} castShadow>
+            <boxGeometry args={[0.05, 0.36, 1.12]} />
+            <meshStandardMaterial color="#ffffff" map={carbonTex} roughness={0.32} metalness={0.45} />
+          </mesh>
+
+          {/* 7. Double-Wishbone Suspension */}
+          {[-1, 1].map((s) => (
+            <React.Fragment key={`fe_susp_${s}`}>
+              <mesh position={[s * 0.72, 0.13, 1.45]} rotation={[0, 0, s * -0.04]}>
+                <boxGeometry args={[0.82, 0.035, 0.10]} />
+                <meshStandardMaterial color="#0f172a" roughness={0.35} metalness={0.7} />
+              </mesh>
+              <mesh position={[s * 0.75, 0.07, -1.25]} rotation={[0, 0, s * 0.04]}>
+                <boxGeometry args={[0.84, 0.045, 0.14]} />
+                <meshStandardMaterial color="#0f172a" roughness={0.35} metalness={0.7} />
+              </mesh>
+            </React.Fragment>
+          ))}
+
+          {/* 8. Signature Gen3 Split Dual-Fin Formula E Rear Wing + Diffuser */}
+          <group position={[0, 0.56, -1.94]}>
+            {[-0.62, 0.62].map((fx, i) => (
+              <mesh key={`fe_rw_fin_${i}`} position={[fx, -0.04, 0]} rotation={[0.14, 0, fx < 0 ? 0.24 : -0.24]} castShadow>
+                <boxGeometry args={[0.055, 0.54, 0.56]} />
+                <meshPhysicalMaterial color={color} roughness={0.16} metalness={0.4} clearcoat={1.0} />
+              </mesh>
+            ))}
+            {[-0.58, 0.58].map((wx, i) => (
+              <mesh key={`fe_rw_winglet_${i}`} position={[wx, 0.18, -0.08]} rotation={[0.26, 0, wx < 0 ? 0.18 : -0.18]} castShadow>
+                <boxGeometry args={[0.42, 0.045, 0.34]} />
+                <meshStandardMaterial color="#ffffff" map={carbonTex} roughness={0.28} metalness={0.45} />
+              </mesh>
+            ))}
+            <mesh position={[0, -0.14, 0.05]} castShadow>
+              <boxGeometry args={[1.28, 0.045, 0.30]} />
+              <meshStandardMaterial color="#ffffff" map={carbonTex} roughness={0.32} metalness={0.4} />
+            </mesh>
+            {[-0.66, 0.66].map((ex, i) => (
+              <mesh key={`fe_rw_brk_${i}`} position={[ex, 0.0, -0.29]} material={lightAssets.brakeOnlyMat}>
+                <boxGeometry args={[0.055, 0.34, 0.04]} />
+              </mesh>
+            ))}
+          </group>
+          <mesh position={[0, -0.05, -2.02]}>
+            <boxGeometry args={[1.42, 0.16, 0.16]} />
+            <meshStandardMaterial color="#ffffff" map={carbonTex} roughness={0.55} />
+          </mesh>
+          <mesh position={[0, 0.02, -2.08]} material={lightAssets.tailRunningMat}>
+            <boxGeometry args={[0.14, 0.20, 0.06]} />
+          </mesh>
+          <group ref={rearBrakeFlaresGroupRef}>
+            <mesh
+              position={[0, 0.02, -2.14]}
+              scale={[0.55, 0.55, 1]}
+              geometry={lightAssets.flarePlaneGeo}
+              material={lightAssets.brakeFlareMat}
+            />
+            {[-0.66, 0.66].map((ex, i) => (
+              <mesh
+                key={`fe_bfl_${i}`}
+                position={[ex, 0.56, -2.28]}
+                scale={[0.40, 0.62, 1]}
                 geometry={lightAssets.flarePlaneGeo}
                 material={lightAssets.brakeFlareMat}
               />
@@ -1897,10 +2160,10 @@ export const Car3D = React.memo(React.forwardRef<THREE.Group, Car3DProps>(({
       <group ref={frontRightWheelRef} position={[wheelX, wheelY, 1.45]}>
         <CarWheel isFront side={1} carClass={carClass} rimColor={rimColor} spinRef={frSpinRef} wheelRotation={wheelRotation} rotorMat={lightAssets.rotorMat} />
       </group>
-      <group ref={rearLeftWheelRef} position={[-(isF1 ? 1.12 : wheelX), wheelY, -1.25]}>
+      <group ref={rearLeftWheelRef} position={[-(isOpenWheel ? 1.12 : wheelX), wheelY, -1.25]}>
         <CarWheel side={-1} carClass={carClass} rimColor={rimColor} spinRef={rlSpinRef} wheelRotation={wheelRotation} rotorMat={lightAssets.rotorMat} />
       </group>
-      <group ref={rearRightWheelRef} position={[isF1 ? 1.12 : wheelX, wheelY, -1.25]}>
+      <group ref={rearRightWheelRef} position={[isOpenWheel ? 1.12 : wheelX, wheelY, -1.25]}>
         <CarWheel side={1} carClass={carClass} rimColor={rimColor} spinRef={rrSpinRef} wheelRotation={wheelRotation} rotorMat={lightAssets.rotorMat} />
       </group>
     </group>

@@ -2,7 +2,7 @@
 ﻿import React, { useMemo, useEffect, useSyncExternalStore } from 'react';
 import * as THREE from 'three';
 import { RigidBody } from '@react-three/rapier';
-import { SplineNode, RoadBranch, computePitStopZones, computeSpline, buildSplineArcSampler } from '../tracks';
+import { SplineNode, RoadBranch, PitStopZonePoint, computePitStopZones, computeElectricTrackZones, computeSpline, buildSplineArcSampler } from '../tracks';
 import { SurfaceType } from '../physics';
 import { buildBranchGeometries } from '../branchRoads';
 import { buildUnifiedRoadNetwork } from '../roadFusion';
@@ -117,6 +117,121 @@ function sanitizeGeoForRapier(geo?: THREE.BufferGeometry | null, isWall = false)
   clean.setAttribute('position', pos.clone());
   clean.setIndex(validIndices);
   return clean;
+}
+
+function buildZoneRibbonGeometry(
+  zones: Array<{ pts: PitStopZonePoint[]; length: number }>,
+  yLift = 0.06,
+  clampPitBoxWidth = true
+): THREE.BufferGeometry | null {
+  if (!zones || zones.length === 0) return null;
+
+  const verts: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+
+  for (const zone of zones) {
+    const pts = zone.pts;
+    if (pts.length < 2) continue;
+    const baseV = verts.length / 3;
+    const len = Math.max(1, zone.length);
+
+    for (let i = 0; i < pts.length; i++) {
+      const curr = pts[i];
+      const prev = pts[Math.max(0, i - 1)];
+      const next = pts[Math.min(pts.length - 1, i + 1)];
+      let tx = next.x - prev.x;
+      let tz = next.y - prev.y;
+      const tl = Math.hypot(tx, tz) || 1;
+      tx /= tl;
+      tz /= tl;
+      const sx = -tz;
+      const sz = tx;
+
+      const hw = clampPitBoxWidth
+        ? Math.max(2.5, Math.min(curr.width * 0.44, curr.width * 0.5 - 0.6))
+        : Math.max(1.5, curr.width * 0.5);
+      const y = curr.z + yLift;
+      const vCoord = curr.dist / len;
+
+      verts.push(curr.x + sx * hw, y, curr.y + sz * hw);
+      uvs.push(0, vCoord);
+      verts.push(curr.x - sx * hw, y, curr.y - sz * hw);
+      uvs.push(1, vCoord);
+    }
+
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = baseV + i * 2;
+      const b = baseV + (i + 1) * 2;
+      indices.push(a, a + 1, b);
+      indices.push(a + 1, b + 1, b);
+    }
+  }
+
+  if (indices.length === 0) return null;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+function makeElectricZoneTexture(kind: 'attack' | 'charge'): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 1024;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.clearRect(0, 0, 512, 1024);
+    const isAttack = kind === 'attack';
+    ctx.fillStyle = isAttack ? 'rgba(6, 182, 212, 0.36)' : 'rgba(16, 185, 129, 0.34)';
+    ctx.fillRect(14, 14, 484, 996);
+
+    ctx.strokeStyle = isAttack ? '#22d3ee' : '#34d399';
+    ctx.lineWidth = 22;
+    ctx.strokeRect(12, 12, 488, 1000);
+
+    for (let y = 36; y < 988; y += 92) {
+      ctx.fillStyle = isAttack ? '#e879f9' : '#6ee7b7';
+      if (isAttack) {
+        ctx.beginPath();
+        ctx.moveTo(46, y + 36);
+        ctx.lineTo(256, y);
+        ctx.lineTo(466, y + 36);
+        ctx.lineTo(466, y + 54);
+        ctx.lineTo(256, y + 18);
+        ctx.lineTo(46, y + 54);
+        ctx.closePath();
+        ctx.fill();
+      } else {
+        ctx.fillRect(42, y + 10, 428, 18);
+      }
+    }
+
+    const drawLabel = (cy: number, rot: number) => {
+      ctx.save();
+      ctx.translate(256, cy);
+      ctx.rotate(rot);
+      ctx.fillStyle = '#090d16';
+      ctx.fillRect(-200, -48, 400, 96);
+      ctx.strokeStyle = isAttack ? '#e879f9' : '#34d399';
+      ctx.lineWidth = 8;
+      ctx.strokeRect(-200, -48, 400, 96);
+      ctx.fillStyle = isAttack ? '#67e8f9' : '#6ee7b7';
+      ctx.font = '900 40px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(isAttack ? '⚡ ATTACK MODE' : '🔋 CHARGE +⚡', 0, 0);
+      ctx.restore();
+    };
+    drawLabel(290, 0);
+    drawLabel(734, Math.PI);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.anisotropy = 4;
+  tex.needsUpdate = true;
+  return tex;
 }
 
 function pushConformedStrip(
@@ -332,6 +447,7 @@ interface Track3DProps {
   showGuardrails?: boolean;
   showEmbankments?: boolean;
   showRedRibbon?: boolean;
+  showElectricZones?: boolean;
   isClosed?: boolean;
   pitSpline?: SplineNode[];
   enablePhysics?: boolean;
@@ -353,6 +469,7 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
   showGuardrails = true,
   showEmbankments = true,
   showRedRibbon = true,
+  showElectricZones = false,
   showLayers = false,
   isClosed = true,
   pitSpline,
@@ -1824,56 +1941,26 @@ export const Track3D: React.FC<Track3DProps> = React.memo(({
 
   const pitStopZoneGeo = useMemo(() => {
     const zones = computePitStopZones(branches, pitSpline);
-    if (zones.length === 0) return null;
-
-    const verts: number[] = [];
-    const uvs: number[] = [];
-    const indices: number[] = [];
-
-    for (const zone of zones) {
-      const pts = zone.pts;
-      if (pts.length < 2) continue;
-      const baseV = verts.length / 3;
-      const len = Math.max(1, zone.length);
-
-      for (let i = 0; i < pts.length; i++) {
-        const curr = pts[i];
-        const prev = pts[Math.max(0, i - 1)];
-        const next = pts[Math.min(pts.length - 1, i + 1)];
-        let tx = next.x - prev.x;
-        let tz = next.y - prev.y;
-        const tl = Math.hypot(tx, tz) || 1;
-        tx /= tl;
-        tz /= tl;
-        const sx = -tz;
-        const sz = tx;
-
-        const hw = Math.max(2.5, Math.min(curr.width * 0.44, curr.width * 0.5 - 0.6));
-        const y = curr.z + 0.06;
-        const vCoord = curr.dist / len;
-
-        verts.push(curr.x + sx * hw, y, curr.y + sz * hw);
-        uvs.push(0, vCoord);
-        verts.push(curr.x - sx * hw, y, curr.y - sz * hw);
-        uvs.push(1, vCoord);
-      }
-
-      for (let i = 0; i < pts.length - 1; i++) {
-        const a = baseV + i * 2;
-        const b = baseV + (i + 1) * 2;
-        indices.push(a, a + 1, b);
-        indices.push(a + 1, b + 1, b);
-      }
-    }
-
-    if (indices.length === 0) return null;
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
-    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-    geo.setIndex(indices);
-    geo.computeVertexNormals();
-    return geo;
+    return buildZoneRibbonGeometry(zones, 0.06, true);
   }, [branches, pitSpline]);
+
+  const attackZoneTex = useMemo(() => makeElectricZoneTexture('attack'), []);
+  const chargeZoneTex = useMemo(() => makeElectricZoneTexture('charge'), []);
+
+  const electricZones = useMemo(
+    () => computeElectricTrackZones(controlPoints, spline, isClosed, Boolean(showElectricZones)),
+    [controlPoints, spline, isClosed, showElectricZones]
+  );
+
+  const attackZoneGeo = useMemo(
+    () => buildZoneRibbonGeometry(electricZones.filter((z) => z.kind === 'attack'), 0.065, false),
+    [electricZones]
+  );
+
+  const chargeZoneGeo = useMemo(
+    () => buildZoneRibbonGeometry(electricZones.filter((z) => z.kind === 'charge'), 0.065, false),
+    [electricZones]
+  );
 
   const pitTimingLineTex = useMemo(() => {
     const canvas = document.createElement('canvas');
@@ -2425,6 +2512,10 @@ function disposeGeometriesIn(obj: object | null | undefined) {
   }, [pitApproachDecals]);
   useEffect(() => () => { pitStopTex.dispose(); }, [pitStopTex]);
   useEffect(() => () => { pitStopZoneGeo?.dispose(); }, [pitStopZoneGeo]);
+  useEffect(() => () => { attackZoneTex.dispose(); }, [attackZoneTex]);
+  useEffect(() => () => { chargeZoneTex.dispose(); }, [chargeZoneTex]);
+  useEffect(() => () => { attackZoneGeo?.dispose(); }, [attackZoneGeo]);
+  useEffect(() => () => { chargeZoneGeo?.dispose(); }, [chargeZoneGeo]);
   useEffect(() => () => { pitTimingLineTex.dispose(); }, [pitTimingLineTex]);
   useEffect(() => () => { finishLineTex.dispose(); }, [finishLineTex]);
   useEffect(() => () => { pitTimingLineGeo?.dispose(); }, [pitTimingLineGeo]);
@@ -2540,6 +2631,38 @@ function disposeGeometriesIn(obj: object | null | undefined) {
             map={pitStopTex}
             transparent
             roughness={0.55}
+            depthWrite={false}
+            polygonOffset
+            polygonOffsetFactor={-2}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+      )}
+
+      {/* Zonas Fórmula E: Attack Mode (Ciano/Magenta) e Carregamento Rápido (Esmeralda) */}
+      {attackZoneGeo && (
+        <mesh geometry={attackZoneGeo} renderOrder={2}>
+          <meshStandardMaterial
+            map={attackZoneTex}
+            emissive="#06b6d4"
+            emissiveIntensity={1.35}
+            transparent
+            roughness={0.35}
+            depthWrite={false}
+            polygonOffset
+            polygonOffsetFactor={-2}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+      )}
+      {chargeZoneGeo && (
+        <mesh geometry={chargeZoneGeo} renderOrder={2}>
+          <meshStandardMaterial
+            map={chargeZoneTex}
+            emissive="#10b981"
+            emissiveIntensity={1.25}
+            transparent
+            roughness={0.35}
             depthWrite={false}
             polygonOffset
             polygonOffsetFactor={-2}
@@ -3231,7 +3354,17 @@ function disposeGeometriesIn(obj: object | null | undefined) {
             const cpZ = cp.z ?? 0;
             const nodeColor = isSelected
               ? '#00f3ff'
-              : (idx === 0 ? '#10b981' : (cp.isTunnel ? '#a855f7' : (idx === controlPoints.length - 1 && !isClosed ? '#ef4444' : '#f59e0b')));
+              : idx === 0
+              ? '#10b981'
+              : cp.isAttackZone
+              ? '#06b6d4'
+              : cp.isChargeZone
+              ? '#22c55e'
+              : cp.isTunnel
+              ? '#a855f7'
+              : idx === controlPoints.length - 1 && !isClosed
+              ? '#ef4444'
+              : '#f59e0b';
             return (
               <group
                 key={idx}

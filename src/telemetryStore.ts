@@ -29,6 +29,12 @@ export interface TelemetryData {
   lapTimeMs: number;
   bestLapMs: number | null;
   lastLapMs: number | null;
+  isElectric: boolean;
+  batteryPct: number;
+  attackModeRemainingSec: number;
+  isRegenerating: boolean;
+  isCharging: boolean;
+  isDrafting: boolean;
 }
 
 export const DEFAULT_TELEMETRY: TelemetryData = {
@@ -57,6 +63,12 @@ export const DEFAULT_TELEMETRY: TelemetryData = {
   lapTimeMs: 0,
   bestLapMs: null,
   lastLapMs: null,
+  isElectric: false,
+  batteryPct: 100,
+  attackModeRemainingSec: 0,
+  isRegenerating: false,
+  isCharging: false,
+  isDrafting: false,
 };
 
 let currentTelemetry: TelemetryData = { ...DEFAULT_TELEMETRY };

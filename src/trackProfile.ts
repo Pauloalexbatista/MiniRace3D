@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { SplineNode } from './tracks';
 
 export type TrackThemeId = 'f1_modern' | 'rally_gravel' | 'classic_street' | 'f1' | 'rally' | 'monaco';
 

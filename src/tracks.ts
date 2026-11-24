@@ -21,6 +21,8 @@ export interface SplineNode {
   isApexTight?: boolean;
   isTunnel?: boolean;
   isPitBox?: boolean;
+  isAttackZone?: boolean;
+  isChargeZone?: boolean;
   maxWallRadius?: number;
   shoulderWidth?: number;
   whiteLineWidth?: number;
@@ -1189,6 +1191,182 @@ export function computePitStopZones(
       centerZ: midPt.y,
       centerY: midPt.z,
     });
+  }
+
+  return zones;
+}
+
+export interface ElectricTrackZone {
+  id: string;
+  kind: 'attack' | 'charge';
+  isAuto: boolean;
+  pts: PitStopZonePoint[];
+  length: number;
+  centerX: number;
+  centerZ: number;
+  centerY: number;
+}
+
+/**
+ * Builds Formula E Attack Mode (outer-line activation) and Charge Zone (induction) strips
+ * from marked control points, falling back to automatic placements when none are marked.
+ */
+export function computeElectricTrackZones(
+  controlPoints: SplineNode[],
+  spline: SplineNode[],
+  isClosed: boolean,
+  includeAutoFallback: boolean
+): ElectricTrackZone[] {
+  if (!spline || spline.length < 2) return [];
+  const sampler = buildSplineArcSampler(spline, isClosed);
+  const totalLen = sampler.totalLen;
+  if (totalLen < 60) return [];
+
+  const buildZoneFromArcRange = (
+    rawStartS: number,
+    rawEndS: number,
+    id: string,
+    kind: 'attack' | 'charge',
+    isAuto: boolean,
+    lateralOffsetFrac: number,
+    widthFrac: number
+  ): ElectricTrackZone | null => {
+    let startS = rawStartS;
+    let endS = rawEndS;
+    if (!isClosed) {
+      startS = Math.max(0, Math.min(totalLen, startS));
+      endS = Math.max(0, Math.min(totalLen, endS));
+    }
+    const span = endS - startS;
+    if (!Number.isFinite(span) || span < 4) return null;
+
+    const numSteps = Math.max(6, Math.ceil(span / 3.5));
+    const pts: PitStopZonePoint[] = [];
+    for (let k = 0; k <= numSteps; k++) {
+      const dist = (k / numSteps) * span;
+      const sp = sampler.sampleAt(startS + dist);
+      const roadW = sp.width || 18;
+      const lat = -roadW * lateralOffsetFrac;
+      pts.push({
+        x: sp.x + sp.lx * lat,
+        y: sp.z + sp.lz * lat,
+        z: sp.y + Math.abs(sp.bankSin) * (roadW * 0.5) - lat * sp.bankSin,
+        width: Math.max(3.2, roadW * widthFrac),
+        dist,
+      });
+    }
+
+    const midPt = pts[Math.floor(pts.length / 2)];
+    return {
+      id,
+      kind,
+      isAuto,
+      pts,
+      length: span,
+      centerX: midPt.x,
+      centerZ: midPt.y,
+      centerY: midPt.z,
+    };
+  };
+
+  const zones: ElectricTrackZone[] = [];
+
+  const collectGroups = (flag: 'isAttackZone' | 'isChargeZone', kind: 'attack' | 'charge') => {
+    if (!controlPoints || controlPoints.length < 2) return;
+    const groups: number[][] = [];
+    let current: number[] = [];
+    for (let i = 0; i < controlPoints.length; i++) {
+      if (controlPoints[i]?.[flag]) {
+        current.push(i);
+      } else if (current.length > 0) {
+        groups.push(current);
+        current = [];
+      }
+    }
+    if (current.length > 0) groups.push(current);
+
+    if (
+      isClosed &&
+      groups.length > 1 &&
+      groups[0][0] === 0 &&
+      groups[groups.length - 1][groups[groups.length - 1].length - 1] === controlPoints.length - 1
+    ) {
+      const lastGrp = groups.pop()!;
+      groups[0] = [...lastGrp, ...groups[0]];
+    }
+
+    const lateralFrac = kind === 'attack' ? 0.22 : 0;
+    const widthFrac = kind === 'attack' ? 0.38 : 0.52;
+
+    groups.forEach((grp, gIdx) => {
+      const firstPt = controlPoints[grp[0]];
+      const lastPt = controlPoints[grp[grp.length - 1]];
+      const sStart = sampler.nearestS(firstPt.x, firstPt.y);
+      const sEnd = sampler.nearestS(lastPt.x, lastPt.y);
+
+      let zone: ElectricTrackZone | null = null;
+      if (grp.length === 1) {
+        const halfLen = flag === 'isAttackZone' ? 22 : 25;
+        zone = buildZoneFromArcRange(
+          sStart - halfLen,
+          sStart + halfLen,
+          `${kind}_manual_${gIdx}`,
+          kind,
+          false,
+          lateralFrac,
+          widthFrac
+        );
+      } else {
+        const delta = isClosed
+          ? (sEnd - sStart + totalLen) % totalLen
+          : Math.max(0, sEnd - sStart);
+        const span = Math.max(36, Math.min(totalLen * 0.35, delta + 20));
+        zone = buildZoneFromArcRange(
+          sStart - 10,
+          sStart - 10 + span,
+          `${kind}_manual_${gIdx}`,
+          kind,
+          false,
+          lateralFrac,
+          widthFrac
+        );
+      }
+      if (zone) zones.push(zone);
+    });
+  };
+
+  collectGroups('isAttackZone', 'attack');
+  collectGroups('isChargeZone', 'charge');
+
+  if (includeAutoFallback && totalLen >= 160) {
+    const hasManualAttack = zones.some((z) => z.kind === 'attack');
+    const hasManualCharge = zones.some((z) => z.kind === 'charge');
+    if (!hasManualAttack) {
+      const cAttack = totalLen * 0.34;
+      const autoAttack = buildZoneFromArcRange(
+        cAttack - 22,
+        cAttack + 22,
+        'attack_auto_0',
+        'attack',
+        true,
+        0.22,
+        0.38
+      );
+      if (autoAttack) zones.push(autoAttack);
+    }
+    if (!hasManualCharge) {
+      const cCharge = totalLen * 0.72;
+      const autoCharge = buildZoneFromArcRange(
+        cCharge - 26,
+        cCharge + 26,
+        'charge_auto_0',
+        'charge',
+        true,
+        0,
+        0.52
+      );
+      if (autoCharge) zones.push(autoCharge);
+    }
   }
 
   return zones;

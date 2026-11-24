@@ -2,7 +2,7 @@ import type { CarClass } from '../components/Car3D';
 import type { SpeedPreset } from '../physics';
 import type { SavedCircuit } from '../tracks';
 
-export type CarCategory = 'f1' | 'gt' | 'rally' | 'drift' | 'open';
+export type CarCategory = 'f1' | 'fe' | 'gt' | 'rally' | 'drift' | 'open';
 export type RoomStatus = 'lobby' | 'loading' | 'countdown' | 'racing' | 'finished';
 export type EnvironmentTheme = 'day' | 'sunset' | 'night';
 
@@ -138,6 +138,7 @@ export interface NetCarState {
   wheelRoll: number;
   braking?: boolean;
   headlights?: boolean;
+  attackModeActive?: boolean;
   lapNumber: number;
   completedLaps: number;
   trackS: number;
@@ -170,6 +171,7 @@ export interface LocalCarNetSample {
   wheelRoll: number;
   braking?: boolean;
   headlights?: boolean;
+  attackModeActive?: boolean;
   lapNumber: number;
   completedLaps: number;
   trackS: number;
@@ -245,6 +247,14 @@ export const CAR_CATEGORY_META: Record<CarCategory, CarCategoryMeta> = {
     desc: 'Monolugares de alta carga aerodinâmica, travagem extrema e curva sobre carris.',
     badgeColor: '#e11d48',
   },
+  fe: {
+    id: 'fe',
+    label: 'Fórmula E',
+    shortLabel: 'FE ⚡',
+    emoji: '⚡',
+    desc: 'Monolugares 100% elétricos: bateria, travagem regenerativa, Attack Mode e carregamento rápido.',
+    badgeColor: '#06b6d4',
+  },
   gt: {
     id: 'gt',
     label: 'GT Racing',
@@ -273,8 +283,8 @@ export const CAR_CATEGORY_META: Record<CarCategory, CarCategoryMeta> = {
     id: 'open',
     label: 'Classe Livre (Mista)',
     shortLabel: 'Misto',
-    emoji: '⚡',
-    desc: 'Cada piloto escolhe livremente entre F1, GT, Rally ou Drift na garagem.',
+    emoji: '🌐',
+    desc: 'Cada piloto escolhe livremente entre F1, Fórmula E, GT, Rally ou Drift na garagem.',
     badgeColor: '#10b981',
   },
 };

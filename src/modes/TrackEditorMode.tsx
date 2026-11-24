@@ -716,6 +716,8 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
       width: ((pCurr.width || 18) + (pNext.width || 18)) / 2,
       banking: ((pCurr.banking || 0) + (pNext.banking || 0)) / 2,
       isTunnel: Boolean(pCurr.isTunnel && pNext.isTunnel),
+      isAttackZone: Boolean(pCurr.isAttackZone && pNext.isAttackZone),
+      isChargeZone: Boolean(pCurr.isChargeZone && pNext.isChargeZone),
       whiteLineWidth: ((pCurr.whiteLineWidth ?? 0.4) + (pNext.whiteLineWidth ?? 0.4)) / 2,
       curbYellowWidth: ((pCurr.curbYellowWidth ?? 0.6) + (pNext.curbYellowWidth ?? 0.6)) / 2,
       curbRedWidth: ((pCurr.curbRedWidth ?? 0.6) + (pNext.curbRedWidth ?? 0.6)) / 2,
@@ -1730,6 +1732,7 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
             showLayers={!isStudioOpen || studioTab !== 'track2d'}
             showControlPoints={showControlPoints && !isDrivingMode && studioTab !== 'scenery'}
             showRedRibbon={showRedRibbon && studioTab !== 'scenery'}
+            showElectricZones={carClass === 'fe'}
             theme={theme}
             trackThemeId={trackThemeId}
           />
@@ -1781,6 +1784,7 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
         {isClosed && currentSpline.length > 2 && (
           <RapierCarController
             spline={currentSpline}
+            controlPoints={controlPoints}
             isClosed={isClosed}
             isRaceActive={isDrivingMode}
             branches={branches}

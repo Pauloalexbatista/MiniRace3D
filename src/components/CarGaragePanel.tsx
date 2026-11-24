@@ -3,7 +3,7 @@ import { RotateCcw, Sliders } from 'lucide-react';
 import { CAR_CATEGORY_META, CarClass, LIVERY_PRESETS } from '../multiplayer/types';
 import { CAR_CLASS_DEFAULTS, CarTuning } from './RapierCarController';
 
-const VALID_CAR_CLASSES: CarClass[] = ['f1', 'gt', 'rally', 'drift'];
+const VALID_CAR_CLASSES: CarClass[] = ['f1', 'fe', 'gt', 'rally', 'drift'];
 
 interface SliderSpec {
   key: Exclude<keyof CarTuning, 'primaryColor' | 'secondaryColor'>;
@@ -194,7 +194,7 @@ export const CarGaragePanel: React.FC<CarGaragePanelProps> = ({
             </span>
           )}
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 6 }}>
           {VALID_CAR_CLASSES.map((cls) => {
             const meta = CAR_CATEGORY_META[cls];
             const selected = carClass === cls;

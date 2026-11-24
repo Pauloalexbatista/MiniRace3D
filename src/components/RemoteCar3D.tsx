@@ -47,6 +47,7 @@ export const RemoteCar3D: React.FC<RemoteCar3DProps> = React.memo(({
   const wheelRollRef = useRef(0);
   const brakeRef = useRef(0);
   const headlightsRef = useRef(true);
+  const attackModeRef = useRef(false);
   const initializedRef = useRef(false);
   const velRef = useRef({ x: 0, y: 0, z: 0 });
   const bodyUserData = useMemo(
@@ -109,6 +110,7 @@ export const RemoteCar3D: React.FC<RemoteCar3DProps> = React.memo(({
     wheelRollRef.current += ((c.speedKmh || 0) / 3.6) * dt * 1.5;
     brakeRef.current = c.braking ? 1 : 0;
     headlightsRef.current = c.headlights !== undefined ? Boolean(c.headlights) : true;
+    attackModeRef.current = Boolean(c.attackModeActive);
   });
 
   return (
@@ -134,6 +136,7 @@ export const RemoteCar3D: React.FC<RemoteCar3DProps> = React.memo(({
           wheelRotationRef={wheelRollRef}
           brakeIntensityRef={brakeRef}
           headlightsOnRef={headlightsRef}
+          attackModeActiveRef={attackModeRef}
           enableRealLights={false}
           environmentTheme={environmentTheme}
           color={primaryColor}

@@ -1,6 +1,18 @@
 import type { CarClass } from './components/Car3D';
 import type { SurfaceType } from './physics';
 
+export const SOLFEGGIO_HZ = {
+  F174: 174,
+  F285: 285,
+  F396: 396,
+  F417: 417,
+  F528: 528,
+  F639: 639,
+  F741: 741,
+  F852: 852,
+  F963: 963,
+} as const;
+
 export interface CarAudioProfile {
   numGears: number;
   idleRpm: number;
@@ -26,77 +38,96 @@ export const CAR_AUDIO_PROFILES: Record<CarClass, CarAudioProfile> = {
     numGears: 8,
     idleRpm: 4200,
     redlineRpm: 15000,
-    baseHzAtIdle: 155,
-    baseHzAtRedline: 540,
+    baseHzAtIdle: 132, // 528 / 4
+    baseHzAtRedline: 319.5, // 639 / 2
     harmonics: [1.0, 1.5, 2.0],
-    harmonicGains: [0.46, 0.34, 0.24],
-    formantMinHz: 1100,
-    formantMaxHz: 2400,
-    formantQ: 2.2,
-    gearWhineGain: 0.16,
-    gearWhineBaseHz: 920,
-    turboGain: 0.04,
+    harmonicGains: [0.46, 0.30, 0.20],
+    formantMinHz: SOLFEGGIO_HZ.F396,
+    formantMaxHz: SOLFEGGIO_HZ.F741,
+    formantQ: 1.1,
+    gearWhineGain: 0.05,
+    gearWhineBaseHz: SOLFEGGIO_HZ.F528,
+    turboGain: 0.02,
     bovEnabled: false,
     exhaustPopStyle: 'crisp',
-    driveAmount: 0.42,
-    engineGain: 0.34,
+    driveAmount: 0.16,
+    engineGain: 0.22,
+  },
+  fe: {
+    numGears: 1,
+    idleRpm: 1000,
+    redlineRpm: 18000,
+    baseHzAtIdle: SOLFEGGIO_HZ.F174,
+    baseHzAtRedline: SOLFEGGIO_HZ.F396,
+    harmonics: [1.0, 1.5, 2.0],
+    harmonicGains: [0.44, 0.32, 0.22],
+    formantMinHz: SOLFEGGIO_HZ.F396,
+    formantMaxHz: SOLFEGGIO_HZ.F639,
+    formantQ: 0.9,
+    gearWhineGain: 0.075,
+    gearWhineBaseHz: SOLFEGGIO_HZ.F396,
+    turboGain: 0.045,
+    bovEnabled: false,
+    exhaustPopStyle: 'crisp',
+    driveAmount: 0.04,
+    engineGain: 0.21,
   },
   gt: {
     numGears: 6,
     idleRpm: 1300,
     redlineRpm: 8600,
-    baseHzAtIdle: 58,
-    baseHzAtRedline: 305,
-    harmonics: [0.5, 1.0, 1.498],
-    harmonicGains: [0.44, 0.42, 0.25],
-    formantMinHz: 340,
-    formantMaxHz: 980,
-    formantQ: 1.8,
-    gearWhineGain: 0.09,
-    gearWhineBaseHz: 680,
-    turboGain: 0.06,
+    baseHzAtIdle: 87, // 174 / 2
+    baseHzAtRedline: 264, // 528 / 2
+    harmonics: [0.5, 1.0, 1.5],
+    harmonicGains: [0.44, 0.38, 0.22],
+    formantMinHz: SOLFEGGIO_HZ.F285,
+    formantMaxHz: SOLFEGGIO_HZ.F528,
+    formantQ: 1.0,
+    gearWhineGain: 0.03,
+    gearWhineBaseHz: SOLFEGGIO_HZ.F396,
+    turboGain: 0.02,
     bovEnabled: false,
     exhaustPopStyle: 'bark',
-    driveAmount: 0.55,
-    engineGain: 0.38,
+    driveAmount: 0.20,
+    engineGain: 0.24,
   },
   rally: {
     numGears: 6,
     idleRpm: 1150,
     redlineRpm: 7800,
-    baseHzAtIdle: 52,
-    baseHzAtRedline: 265,
-    harmonics: [0.5, 1.0, 1.33],
-    harmonicGains: [0.46, 0.40, 0.28],
-    formantMinHz: 280,
-    formantMaxHz: 860,
-    formantQ: 1.9,
-    gearWhineGain: 0.12,
-    gearWhineBaseHz: 740,
-    turboGain: 0.18,
+    baseHzAtIdle: 99, // 396 / 4
+    baseHzAtRedline: 208.5, // 417 / 2
+    harmonics: [0.5, 1.0, 1.5],
+    harmonicGains: [0.44, 0.36, 0.24],
+    formantMinHz: SOLFEGGIO_HZ.F285,
+    formantMaxHz: SOLFEGGIO_HZ.F639,
+    formantQ: 1.0,
+    gearWhineGain: 0.04,
+    gearWhineBaseHz: SOLFEGGIO_HZ.F417,
+    turboGain: 0.05,
     bovEnabled: true,
     exhaustPopStyle: 'antilag',
-    driveAmount: 0.65,
-    engineGain: 0.38,
+    driveAmount: 0.22,
+    engineGain: 0.24,
   },
   drift: {
     numGears: 6,
     idleRpm: 1100,
     redlineRpm: 8200,
-    baseHzAtIdle: 56,
-    baseHzAtRedline: 315,
+    baseHzAtIdle: 104.25, // 417 / 4
+    baseHzAtRedline: SOLFEGGIO_HZ.F285,
     harmonics: [1.0, 1.5, 2.0],
-    harmonicGains: [0.48, 0.32, 0.22],
-    formantMinHz: 420,
-    formantMaxHz: 1150,
-    formantQ: 2.0,
-    gearWhineGain: 0.07,
-    gearWhineBaseHz: 640,
-    turboGain: 0.22,
+    harmonicGains: [0.45, 0.30, 0.20],
+    formantMinHz: SOLFEGGIO_HZ.F396,
+    formantMaxHz: SOLFEGGIO_HZ.F639,
+    formantQ: 1.05,
+    gearWhineGain: 0.03,
+    gearWhineBaseHz: SOLFEGGIO_HZ.F417,
+    turboGain: 0.06,
     bovEnabled: true,
     exhaustPopStyle: 'snap',
-    driveAmount: 0.60,
-    engineGain: 0.37,
+    driveAmount: 0.20,
+    engineGain: 0.23,
   },
 };
 
@@ -172,6 +203,7 @@ export function computeEngineAcoustics(
 ): EngineAcousticState {
   const prof = CAR_AUDIO_PROFILES[input.carClass] ?? CAR_AUDIO_PROFILES.f1;
   const mem = prevMem ?? createEngineMemory(input.carClass);
+  const isElectric = input.carClass === 'fe';
 
   const dt = clampRange(input.dt, 0.001, 0.08);
   const maxSpd = Math.max(120, Number.isFinite(input.maxSpeedKmh) ? input.maxSpeedKmh : 260);
@@ -199,7 +231,7 @@ export function computeEngineAcoustics(
         if (speedFrac >= gearUpperSpeedFrac(g, prof.numGears)) chosen = g + 1;
       }
       nextGear = chosen;
-    } else if (shiftCooldown <= 0) {
+    } else if (!isElectric && shiftCooldown <= 0) {
       const upThresh = gearUpperSpeedFrac(mem.gear, prof.numGears) * 1.015;
       const downThresh = mem.gear > 1 ? gearUpperSpeedFrac(mem.gear - 1, prof.numGears) * 0.90 : -1;
 
@@ -225,19 +257,25 @@ export function computeEngineAcoustics(
 
   let targetRpmNorm = 0.05;
   if (nextGear === 0) {
-    // Grid / Neutral free revving
-    targetRpmNorm = throttle > 0.02 ? 0.14 + Math.pow(throttle, 0.85) * 0.86 : 0.05;
+    // Grid / Neutral free revving (FE stays quiet on grid)
+    targetRpmNorm = isElectric
+      ? throttle > 0.05
+        ? 0.08 + throttle * 0.22
+        : 0.03
+      : throttle > 0.02
+      ? 0.14 + Math.pow(throttle, 0.85) * 0.86
+      : 0.05;
   } else if (nextGear === -1) {
-    targetRpmNorm = clamp01(0.16 + (speedKmh / 65) * 0.70 + throttle * 0.14);
+    targetRpmNorm = clamp01(0.14 + (speedKmh / 65) * 0.68 + throttle * 0.12);
   } else {
     const lo = gearLowerSpeedFrac(nextGear, prof.numGears) * maxSpd;
     const hi = Math.max(lo + 12, gearUpperSpeedFrac(nextGear, prof.numGears) * maxSpd);
     const inGearFrac = clamp01((speedKmh - lo) / (hi - lo));
-    const launchSlip = nextGear === 1 && speedKmh < 35 ? throttle * (1 - speedKmh / 35) * 0.34 : 0;
-    const wheelspinBoost = input.handbrake && speedKmh > 12 ? throttle * 0.22 : 0;
-    const minDrivingNorm = nextGear === 1 ? 0.12 : 0.20;
+    const launchSlip = !isElectric && nextGear === 1 && speedKmh < 35 ? throttle * (1 - speedKmh / 35) * 0.34 : 0;
+    const wheelspinBoost = !isElectric && input.handbrake && speedKmh > 12 ? throttle * 0.22 : 0;
+    const minDrivingNorm = isElectric ? 0.04 : nextGear === 1 ? 0.12 : 0.20;
     targetRpmNorm = clamp01(
-      minDrivingNorm + inGearFrac * (1 - minDrivingNorm) + throttle * 0.06 + launchSlip + wheelspinBoost
+      minDrivingNorm + inGearFrac * (1 - minDrivingNorm) + throttle * 0.05 + launchSlip + wheelspinBoost
     );
   }
 
@@ -250,13 +288,13 @@ export function computeEngineAcoustics(
         ? 9.5
         : 5.5
       : targetRpmNorm > mem.rpmNorm
-      ? 16
-      : 10.5;
+      ? 14
+      : 9.5;
   let rpmNorm = mem.rpmNorm + (targetRpmNorm - mem.rpmNorm) * Math.min(1, dt * rpmRate);
 
-  // Authentic ~16 Hz ignition cut bounce at redline limiter
+  // Authentic ~16 Hz ignition cut bounce at redline limiter (combustion classes only)
   let nextLimiterPhase = mem.limiterPhase;
-  if (rpmNorm > 0.96 && throttle > 0.7) {
+  if (!isElectric && rpmNorm > 0.96 && throttle > 0.7) {
     nextLimiterPhase = (mem.limiterPhase + dt * 16.0) % 1;
     const cutWave = nextLimiterPhase < 0.45 ? 0.0 : -0.055;
     rpmNorm = clamp01(rpmNorm + cutWave);
@@ -264,9 +302,9 @@ export function computeEngineAcoustics(
     nextLimiterPhase = 0;
   }
 
-  // Slight damaged-engine sputter below 40% health
-  if (engineHealthNorm < 0.4 && throttle > 0.3) {
-    const damageFlutter = Math.sin((mem.limiterPhase + dt * 23) * Math.PI * 2) * (0.4 - engineHealthNorm) * 0.06;
+  // Gentle damaged-engine flutter below 40% health (combustion only)
+  if (!isElectric && engineHealthNorm < 0.4 && throttle > 0.3) {
+    const damageFlutter = Math.sin((mem.limiterPhase + dt * 23) * Math.PI * 2) * (0.4 - engineHealthNorm) * 0.05;
     rpmNorm = clamp01(rpmNorm + damageFlutter);
   }
 
@@ -274,11 +312,11 @@ export function computeEngineAcoustics(
   const fundamentalHz = clampRange(
     prof.baseHzAtIdle + (prof.baseHzAtRedline - prof.baseHzAtIdle) * Math.pow(rpmNorm, 0.96),
     38,
-    850
+    528
   );
 
   // Turbo boost build & Blow-off / Lift-off exhaust pops
-  const hasBoostSource = prof.bovEnabled || prof.turboGain > 0.08;
+  const hasBoostSource = !isElectric && (prof.bovEnabled || prof.turboGain > 0.08);
   const targetBoost =
     hasBoostSource && nextGear !== 0 && throttle > 0.45 && rpmNorm > 0.35
       ? clamp01(((rpmNorm - 0.30) / 0.65) * throttle)
@@ -289,14 +327,20 @@ export function computeEngineAcoustics(
   const boostLevel = clamp01(mem.boostLevel + (targetBoost - mem.boostLevel) * Math.min(1, dt * boostRate));
 
   const sharpLift = mem.prevThrottle > 0.45 && throttle < 0.25;
-  const triggerBov = Boolean(prof.bovEnabled && mem.boostLevel > 0.45 && sharpLift);
-  const triggerLiftPop =
-    (shiftEvent === 'down' && mem.rpmNorm > 0.42) ||
-    ((prof.exhaustPopStyle === 'antilag' || prof.exhaustPopStyle === 'snap') &&
-      mem.prevThrottle > 0.55 &&
-      throttle < 0.18 &&
-      mem.rpmNorm > 0.50) ||
-    (prof.exhaustPopStyle === 'bark' && brake > 0.55 && mem.prevThrottle > 0.4 && throttle < 0.15 && mem.rpmNorm > 0.6);
+  const triggerBov = Boolean(!isElectric && prof.bovEnabled && mem.boostLevel > 0.45 && sharpLift);
+  const triggerLiftPop = Boolean(
+    !isElectric &&
+      ((shiftEvent === 'down' && mem.rpmNorm > 0.42) ||
+        ((prof.exhaustPopStyle === 'antilag' || prof.exhaustPopStyle === 'snap') &&
+          mem.prevThrottle > 0.55 &&
+          throttle < 0.18 &&
+          mem.rpmNorm > 0.50) ||
+        (prof.exhaustPopStyle === 'bark' &&
+          brake > 0.55 &&
+          mem.prevThrottle > 0.4 &&
+          throttle < 0.15 &&
+          mem.rpmNorm > 0.6))
+  );
 
   const memory: EngineAcousticMemory = {
     gear: nextGear,
@@ -337,6 +381,9 @@ export interface AudioMixInput {
   rpmNorm: number;
   fundamentalHz: number;
   boostLevel: number;
+  isRegenerating?: boolean;
+  attackModeActive?: boolean;
+  cruiseRelax?: number;
 }
 
 export interface AudioMixLevels {
@@ -359,7 +406,7 @@ export interface AudioMixLevels {
 }
 
 /**
- * Pure acoustic level & filter calculator for engine, turbo, gearbox, tires, wind, curbs, gravel, and tunnel echo.
+ * Pure acoustic level & filter calculator tuned around Solfeggio harmonics with anti-fatigue cruise ducking.
  */
 export function computeAudioMixLevels(input: AudioMixInput): AudioMixLevels {
   const prof = CAR_AUDIO_PROFILES[input.carClass] ?? CAR_AUDIO_PROFILES.f1;
@@ -372,6 +419,11 @@ export function computeAudioMixLevels(input: AudioMixInput): AudioMixLevels {
   const tunnelBlend = clamp01(input.tunnelBlend);
   const rpmNorm = clamp01(input.rpmNorm);
   const boostLevel = clamp01(input.boostLevel);
+  const cruiseRelax = clamp01(input.cruiseRelax ?? 0);
+
+  const relaxGain = 1 - 0.34 * cruiseRelax;
+  const relaxFilter = 1 - 0.35 * cruiseRelax;
+  const relaxWhine = 1 - 0.42 * cruiseRelax;
 
   const isCockpit = input.cameraMode === 'cockpit';
   const cockpitWarmth = isCockpit ? 0.86 : 1.0;
@@ -391,39 +443,65 @@ export function computeAudioMixLevels(input: AudioMixInput): AudioMixLevels {
     input.surface === 'SAND' ||
     input.surface === 'GRAVEL';
 
-  const loadFactor = 0.50 + 0.44 * throttle + 0.16 * rpmNorm;
-  const healthFactor = engineHealth < 45 ? 0.88 : 1.0;
-  const engineGain = clampRange(prof.engineGain * loadFactor * healthFactor * cockpitBodyGain, 0, 0.55);
+  const loadFactor =
+    input.carClass === 'fe'
+      ? 0.36 + 0.42 * throttle + 0.24 * rpmNorm
+      : 0.48 + 0.44 * throttle + 0.16 * rpmNorm;
+  const healthFactor = engineHealth < 45 ? 0.90 : 1.0;
+  const engineGain = clampRange(
+    prof.engineGain * loadFactor * healthFactor * cockpitBodyGain * relaxGain,
+    0,
+    0.34
+  );
 
   const engineFilterHz = clampRange(
-    (260 + 2700 * Math.pow(rpmNorm, 1.1) + throttle * 680) * cockpitWarmth,
-    220,
-    4800
+    (220 + 1350 * Math.pow(rpmNorm, 1.05) + throttle * 320) * cockpitWarmth * relaxFilter,
+    SOLFEGGIO_HZ.F174,
+    1900
   );
   const formantHz = clampRange(
     (prof.formantMinHz + (prof.formantMaxHz - prof.formantMinHz) * rpmNorm) * cockpitWarmth,
-    220,
-    3000
+    SOLFEGGIO_HZ.F174,
+    SOLFEGGIO_HZ.F963
   );
 
-  const turboGain = clampRange(
-    prof.turboGain * boostLevel * (0.35 + 0.65 * rpmNorm) * (isCockpit ? 0.82 : 1.0),
+  let turboGain = clampRange(
+    prof.turboGain * boostLevel * (0.35 + 0.65 * rpmNorm) * (isCockpit ? 0.82 : 1.0) * relaxWhine,
     0,
-    0.35
+    0.12
   );
-  const turboHz = clampRange(2200 + boostLevel * 3800 + rpmNorm * 1400, 1600, 8200);
+  let turboHz = clampRange(
+    SOLFEGGIO_HZ.F528 + boostLevel * (SOLFEGGIO_HZ.F963 - SOLFEGGIO_HZ.F528) * 0.75 + rpmNorm * 108,
+    SOLFEGGIO_HZ.F528,
+    SOLFEGGIO_HZ.F963
+  );
 
   const speedNorm300 = clamp01(speedKmh / 300);
-  const gearWhineGain = clampRange(
-    prof.gearWhineGain * speedNorm300 * (0.35 + 0.65 * throttle) * (isCockpit ? 1.12 : 0.85),
+  let gearWhineGain = clampRange(
+    prof.gearWhineGain * speedNorm300 * (0.35 + 0.65 * throttle) * (isCockpit ? 1.08 : 0.85) * relaxWhine,
     0,
-    0.24
+    0.10
   );
-  const gearWhineHz = clampRange(prof.gearWhineBaseHz + speedKmh * 6.8 + rpmNorm * 320, 480, 4200);
+  let gearWhineHz = clampRange(
+    prof.gearWhineBaseHz + (speedKmh / 350) * (SOLFEGGIO_HZ.F963 - prof.gearWhineBaseHz) * 0.78 + rpmNorm * 85,
+    SOLFEGGIO_HZ.F396,
+    SOLFEGGIO_HZ.F963
+  );
 
-  // Tire squeal only on paved asphalt/curbs when sliding, locking brakes, handbraking, or spinning bald tires
+  if (input.carClass === 'fe') {
+    if (input.attackModeActive) {
+      turboHz = SOLFEGGIO_HZ.F963;
+      turboGain = Math.max(turboGain, 0.055);
+    }
+    if (input.isRegenerating) {
+      gearWhineHz = SOLFEGGIO_HZ.F741;
+      gearWhineGain = Math.max(gearWhineGain, 0.065);
+    }
+  }
+
+  // Softer tire squeal centered around warm 639–852 Hz range
   let tireSquealGain = 0;
-  let tireSquealHz = 960;
+  let tireSquealHz: number = SOLFEGGIO_HZ.F639;
   if (input.grounded && isPaved && speedKmh > 6) {
     const latSlip = absLat > 3.5 ? clamp01((absLat - 3.5) / 11.5) : 0;
     const handbrakeSlip = input.handbrake && speedKmh > 12 ? clamp01(0.45 + speedKmh / 140) : 0;
@@ -432,19 +510,27 @@ export function computeAudioMixLevels(input: AudioMixInput): AudioMixLevels {
 
     const slipCombined = clamp01(Math.max(latSlip, handbrakeSlip, brakeLockSlip, baldSpinSlip));
     if (slipCombined > 0.02) {
-      tireSquealGain = clampRange(slipCombined * 0.22 * (isCockpit ? 0.72 : 1.0), 0, 0.25);
-      tireSquealHz = clampRange(860 + slipCombined * 380 + Math.min(220, speedKmh * 0.7), 820, 1580);
+      tireSquealGain = clampRange(slipCombined * 0.10 * (isCockpit ? 0.72 : 1.0), 0, 0.11);
+      tireSquealHz = clampRange(
+        SOLFEGGIO_HZ.F639 + slipCombined * 170 + Math.min(43, speedKmh * 0.15),
+        SOLFEGGIO_HZ.F639,
+        SOLFEGGIO_HZ.F852
+      );
     }
   }
 
-  // Aerodynamic wind noise (> 80 km/h)
+  // Aerodynamic wind noise (> 85 km/h), relaxed during steady cruise
   let windGain = 0;
-  let windHz = 500;
-  if (speedKmh > 80) {
-    const wNorm = clamp01((speedKmh - 80) / 280);
+  let windHz: number = SOLFEGGIO_HZ.F396;
+  if (speedKmh > 85) {
+    const wNorm = clamp01((speedKmh - 85) / 280);
     const tunnelWindDuck = 1 - tunnelBlend * 0.35;
-    windGain = clampRange(Math.pow(wNorm, 1.35) * 0.22 * tunnelWindDuck * (isCockpit ? 0.75 : 1.0), 0, 0.26);
-    windHz = clampRange(340 + wNorm * 980 * cockpitWarmth, 280, 1550);
+    windGain = clampRange(
+      Math.pow(wNorm, 1.35) * 0.15 * tunnelWindDuck * (isCockpit ? 0.75 : 1.0) * relaxWhine,
+      0,
+      0.18
+    );
+    windHz = clampRange(285 + wNorm * 456 * cockpitWarmth, SOLFEGGIO_HZ.F285, SOLFEGGIO_HZ.F852);
   }
 
   // Curb rumble stripes
@@ -453,25 +539,30 @@ export function computeAudioMixLevels(input: AudioMixInput): AudioMixLevels {
   if (input.grounded && isCurb && speedKmh > 6) {
     const curbSeverity = input.surface === 'CURB_APEX' ? 1.0 : input.surface === 'CURB_WIDE' ? 0.85 : 0.68;
     const spdScale = clamp01((speedKmh - 6) / 140);
-    curbGain = clampRange(0.24 * curbSeverity * (0.28 + 0.72 * spdScale), 0, 0.28);
-    curbModHz = clampRange(18 + speedKmh * 0.32, 16, 125);
+    curbGain = clampRange(0.18 * curbSeverity * (0.28 + 0.72 * spdScale), 0, 0.22);
+    curbModHz = clampRange(18 + speedKmh * 0.32, 16, 110);
   }
 
   // Off-road gravel/sand/grass roar
   let offroadGain = 0;
-  let offroadHz = 650;
+  let offroadHz: number = SOLFEGGIO_HZ.F528;
   if (input.grounded && isOffroad && speedKmh > 4) {
     const spdScale = clamp01((speedKmh - 4) / 130);
-    const surfGain = input.surface === 'GRAVEL' ? 0.26 : input.surface === 'SAND' ? 0.21 : 0.16;
-    offroadGain = clampRange(surfGain * (0.2 + 0.8 * spdScale), 0, 0.28);
+    const surfGain = input.surface === 'GRAVEL' ? 0.20 : input.surface === 'SAND' ? 0.16 : 0.12;
+    offroadGain = clampRange(surfGain * (0.2 + 0.8 * spdScale), 0, 0.22);
     offroadHz = clampRange(
-      (input.surface === 'GRAVEL' ? 920 : input.surface === 'SAND' ? 680 : 520) + speedKmh * 3.0,
-      360,
-      1900
+      (input.surface === 'GRAVEL'
+        ? SOLFEGGIO_HZ.F639
+        : input.surface === 'SAND'
+        ? SOLFEGGIO_HZ.F528
+        : SOLFEGGIO_HZ.F396) +
+        speedKmh * 1.4,
+      SOLFEGGIO_HZ.F285,
+      SOLFEGGIO_HZ.F963
     );
   }
 
-  const tunnelWetGain = clampRange(tunnelBlend * 0.52, 0, 0.55);
+  const tunnelWetGain = clampRange(tunnelBlend * 0.38, 0, 0.42);
 
   return {
     engineGain,
@@ -497,7 +588,8 @@ export function computeAudioMixLevels(input: AudioMixInput): AudioMixLevels {
 // Persisted User Audio Preferences Store
 // ============================================================
 
-const AUDIO_STORAGE_KEY = 'minirace3d_audio_v1';
+const AUDIO_STORAGE_KEY = 'minirace3d_audio_v2';
+const DEFAULT_AUDIO_VOLUME = 0.38;
 
 export interface AudioSettings {
   muted: boolean;
@@ -505,7 +597,7 @@ export interface AudioSettings {
 }
 
 function loadAudioSettings(): AudioSettings {
-  const defaults: AudioSettings = { muted: false, volume: 0.7 };
+  const defaults: AudioSettings = { muted: false, volume: DEFAULT_AUDIO_VOLUME };
   try {
     if (typeof localStorage === 'undefined') return defaults;
     const raw = localStorage.getItem(AUDIO_STORAGE_KEY);
@@ -513,9 +605,10 @@ function loadAudioSettings(): AudioSettings {
     const parsed = JSON.parse(raw) as Partial<AudioSettings>;
     return {
       muted: Boolean(parsed.muted),
-      volume: typeof parsed.volume === 'number' && Number.isFinite(parsed.volume)
-        ? clamp01(parsed.volume)
-        : 0.7,
+      volume:
+        typeof parsed.volume === 'number' && Number.isFinite(parsed.volume)
+          ? clamp01(parsed.volume)
+          : DEFAULT_AUDIO_VOLUME,
     };
   } catch {
     return defaults;
@@ -597,12 +690,14 @@ export interface SoundUpdateInput {
   tunnelBlend: number;
   cameraMode: 'chase' | 'cockpit' | 'orbit';
   dt: number;
+  isRegenerating?: boolean;
+  attackModeActive?: boolean;
 }
 
 function makeDistortionCurve(amount: number): Float32Array {
   const n = 256;
   const curve = new Float32Array(n);
-  const k = Math.max(1, amount * 40);
+  const k = Math.max(0.25, amount * 24);
   for (let i = 0; i < n; i++) {
     const x = (i * 2) / n - 1;
     curve[i] = ((1 + k) * x) / (1 + k * Math.abs(x));
@@ -618,9 +713,9 @@ function createNoiseBuffer(ctx: AudioContext, seconds = 2): AudioBuffer {
   let last = 0;
   for (let i = 0; i < length; i++) {
     const white = Math.random() * 2 - 1;
-    // Slight pink-ish tilt for fuller mechanical & surface texture
-    last = last * 0.35 + white * 0.65;
-    data[i] = Math.max(-1, Math.min(1, last * 1.15));
+    // Smooth pink-ish tilt for pleasant organic surface texture
+    last = last * 0.45 + white * 0.55;
+    data[i] = Math.max(-1, Math.min(1, last * 1.1));
   }
   return buf;
 }
@@ -721,11 +816,16 @@ class CarSoundEngine {
 
   private mem: EngineAcousticMemory = createEngineMemory('f1');
   private lastClass: CarClass = 'f1';
+  private waveIsElectric = false;
   private shiftDipUntil = 0;
   private lastImpactMs = 0;
   private lastPopMs = 0;
   private lastBovMs = 0;
+  private lastChargePulseMs = 0;
   private currentDrive = -1;
+  private cruiseSteadySec = 0;
+  private prevSpeedKmh = 0;
+  private prevRpmNorm = 0;
   private isInitialized = false;
   private tabHidden = false;
 
@@ -756,7 +856,7 @@ class CarSoundEngine {
   private syncMasterGain(): void {
     if (!this.ctx || !this.masterGain) return;
     const s = getAudioSettings();
-    const target = s.muted || this.tabHidden ? 0 : s.volume * 0.9;
+    const target = s.muted || this.tabHidden ? 0 : s.volume * 0.55;
     this.safeSetTarget(this.masterGain.gain, target, this.ctx.currentTime, 0.035);
   }
 
@@ -772,9 +872,12 @@ class CarSoundEngine {
         this.buildGraph(this.ctx);
       }
       if (this.ctx.state === 'suspended') {
-        void this.ctx.resume().then(() => {
-          this.syncMasterGain();
-        }).catch(() => {});
+        void this.ctx
+          .resume()
+          .then(() => {
+            this.syncMasterGain();
+          })
+          .catch(() => {});
       } else {
         this.syncMasterGain();
       }
@@ -788,15 +891,15 @@ class CarSoundEngine {
     this.isInitialized = true;
 
     const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -14;
-    comp.knee.value = 18;
-    comp.ratio.value = 5;
-    comp.attack.value = 0.004;
-    comp.release.value = 0.14;
+    comp.threshold.value = -16;
+    comp.knee.value = 20;
+    comp.ratio.value = 4.5;
+    comp.attack.value = 0.005;
+    comp.release.value = 0.16;
 
     const master = ctx.createGain();
     const initSettings = getAudioSettings();
-    master.gain.value = initSettings.muted || this.tabHidden ? 0 : initSettings.volume * 0.9;
+    master.gain.value = initSettings.muted || this.tabHidden ? 0 : initSettings.volume * 0.55;
 
     comp.connect(master);
     master.connect(ctx.destination);
@@ -808,7 +911,7 @@ class CarSoundEngine {
     dryBus.connect(comp);
     this.dryBus = dryBus;
 
-    // Tunnel echo bus (slapback + damped feedback)
+    // Warm tunnel echo bus
     const tunnelSend = ctx.createGain();
     tunnelSend.gain.value = 1.0;
     const delayA = ctx.createDelay(0.5);
@@ -816,10 +919,10 @@ class CarSoundEngine {
     const delayB = ctx.createDelay(0.5);
     delayB.delayTime.value = 0.089;
     const fbGain = ctx.createGain();
-    fbGain.gain.value = 0.38;
+    fbGain.gain.value = 0.34;
     const dampLp = ctx.createBiquadFilter();
     dampLp.type = 'lowpass';
-    dampLp.frequency.value = 2600;
+    dampLp.frequency.value = 1800;
     const tunnelOut = ctx.createGain();
     tunnelOut.gain.value = 0;
 
@@ -835,40 +938,40 @@ class CarSoundEngine {
     this.tunnelSendGain = tunnelSend;
     this.tunnelOutGain = tunnelOut;
 
-    // Engine oscillator triad -> exhaust saturation -> lowpass + parallel formant -> engineOutGain
+    // Smooth harmonic oscillator triad (triangle/sine) -> gentle warmth shaper -> lowpass + formant -> engineOutGain
     const oscA = ctx.createOscillator();
-    oscA.type = 'sawtooth';
-    oscA.frequency.value = 120;
+    oscA.type = 'triangle';
+    oscA.frequency.value = 132;
     const oscB = ctx.createOscillator();
-    oscB.type = 'sawtooth';
-    oscB.frequency.value = 180;
+    oscB.type = 'triangle';
+    oscB.frequency.value = 198;
     const oscC = ctx.createOscillator();
-    oscC.type = 'triangle';
-    oscC.frequency.value = 240;
+    oscC.type = 'sine';
+    oscC.frequency.value = 264;
 
     const gA = ctx.createGain();
     const gB = ctx.createGain();
     const gC = ctx.createGain();
     gA.gain.value = 0.45;
-    gB.gain.value = 0.35;
+    gB.gain.value = 0.32;
     gC.gain.value = 0.22;
 
     const shaper = ctx.createWaveShaper();
-    shaper.curve = makeDistortionCurve(0.45);
+    shaper.curve = makeDistortionCurve(0.16);
     shaper.oversample = '2x';
 
     const lp = ctx.createBiquadFilter();
     lp.type = 'lowpass';
-    lp.frequency.value = 750;
-    lp.Q.value = 1.3;
+    lp.frequency.value = 640;
+    lp.Q.value = 0.9;
 
     const formant = ctx.createBiquadFilter();
     formant.type = 'bandpass';
-    formant.frequency.value = 900;
-    formant.Q.value = 2.0;
+    formant.frequency.value = SOLFEGGIO_HZ.F528;
+    formant.Q.value = 1.0;
 
     const formantGain = ctx.createGain();
-    formantGain.gain.value = 0.48;
+    formantGain.gain.value = 0.26;
 
     const engOut = ctx.createGain();
     engOut.gain.value = 0;
@@ -903,10 +1006,10 @@ class CarSoundEngine {
     this.engineFormantGain = formantGain;
     this.engineOutGain = engOut;
 
-    // Turbo spool whine
+    // Harmonic boost / Attack Mode shimmer voice (528–963 Hz)
     const turboOsc = ctx.createOscillator();
     turboOsc.type = 'sine';
-    turboOsc.frequency.value = 2800;
+    turboOsc.frequency.value = SOLFEGGIO_HZ.F528;
     const turboGain = ctx.createGain();
     turboGain.gain.value = 0;
     turboOsc.connect(turboGain);
@@ -916,10 +1019,10 @@ class CarSoundEngine {
     this.turboOsc = turboOsc;
     this.turboGain = turboGain;
 
-    // Straight-cut gearbox whine
+    // Solfeggio transmission / electric inverter harmonic (396–963 Hz)
     const whineOsc = ctx.createOscillator();
     whineOsc.type = 'sine';
-    whineOsc.frequency.value = 900;
+    whineOsc.frequency.value = SOLFEGGIO_HZ.F396;
     const whineGain = ctx.createGain();
     whineGain.gain.value = 0;
     whineOsc.connect(whineGain);
@@ -939,16 +1042,16 @@ class CarSoundEngine {
       return src;
     };
 
-    // Tire squeal: dual narrow resonant bandpass filters
+    // Tire squeal: softer dual bandpass filters around 639–852 Hz
     const tireSrc = makeLoopNoise();
     const tireBp1 = ctx.createBiquadFilter();
     tireBp1.type = 'bandpass';
-    tireBp1.frequency.value = 960;
-    tireBp1.Q.value = 7.5;
+    tireBp1.frequency.value = SOLFEGGIO_HZ.F639;
+    tireBp1.Q.value = 3.6;
     const tireBp2 = ctx.createBiquadFilter();
     tireBp2.type = 'bandpass';
-    tireBp2.frequency.value = 1480;
-    tireBp2.Q.value = 6.5;
+    tireBp2.frequency.value = SOLFEGGIO_HZ.F852;
+    tireBp2.Q.value = 3.2;
     const tireGain = ctx.createGain();
     tireGain.gain.value = 0;
     tireSrc.connect(tireBp1);
@@ -966,8 +1069,8 @@ class CarSoundEngine {
     const windSrc = makeLoopNoise();
     const windBp = ctx.createBiquadFilter();
     windBp.type = 'bandpass';
-    windBp.frequency.value = 520;
-    windBp.Q.value = 0.85;
+    windBp.frequency.value = SOLFEGGIO_HZ.F396;
+    windBp.Q.value = 0.75;
     const windGain = ctx.createGain();
     windGain.gain.value = 0;
     windSrc.connect(windBp);
@@ -981,15 +1084,15 @@ class CarSoundEngine {
     const curbSrc = makeLoopNoise();
     const curbLp = ctx.createBiquadFilter();
     curbLp.type = 'lowpass';
-    curbLp.frequency.value = 240;
-    curbLp.Q.value = 2.2;
+    curbLp.frequency.value = 220;
+    curbLp.Q.value = 1.6;
     const curbAmp = ctx.createGain();
     curbAmp.gain.value = 0.55;
     const curbOut = ctx.createGain();
     curbOut.gain.value = 0;
     const curbLfo = ctx.createOscillator();
     curbLfo.type = 'sine';
-    curbLfo.frequency.value = 32;
+    curbLfo.frequency.value = 28;
     const curbLfoGain = ctx.createGain();
     curbLfoGain.gain.value = 0.45;
     curbLfo.connect(curbLfoGain);
@@ -1010,8 +1113,8 @@ class CarSoundEngine {
     const offSrc = makeLoopNoise();
     const offBp = ctx.createBiquadFilter();
     offBp.type = 'bandpass';
-    offBp.frequency.value = 780;
-    offBp.Q.value = 1.2;
+    offBp.frequency.value = SOLFEGGIO_HZ.F528;
+    offBp.Q.value = 1.0;
     const offGain = ctx.createGain();
     offGain.gain.value = 0;
     offSrc.connect(offBp);
@@ -1021,25 +1124,25 @@ class CarSoundEngine {
     this.offroadBand = offBp;
     this.offroadGain = offGain;
 
-    // Fixed pool of 4 spatialized opponent engine voices
+    // Fixed pool of 4 warm spatialized opponent voices
     this.opponentVoices = [];
     for (let i = 0; i < OPPONENT_VOICE_COUNT; i++) {
       const oppOscA = ctx.createOscillator();
-      oppOscA.type = 'sawtooth';
-      oppOscA.frequency.value = 120;
+      oppOscA.type = 'triangle';
+      oppOscA.frequency.value = 132;
       const oppOscB = ctx.createOscillator();
-      oppOscB.type = 'sawtooth';
-      oppOscB.frequency.value = 180;
+      oppOscB.type = 'sine';
+      oppOscB.frequency.value = 198;
 
       const oppGainA = ctx.createGain();
-      oppGainA.gain.value = 0.52;
+      oppGainA.gain.value = 0.48;
       const oppGainB = ctx.createGain();
       oppGainB.gain.value = 0.34;
 
       const oppLp = ctx.createBiquadFilter();
       oppLp.type = 'lowpass';
-      oppLp.frequency.value = 1200;
-      oppLp.Q.value = 1.1;
+      oppLp.frequency.value = 900;
+      oppLp.Q.value = 0.9;
 
       const oppPanner =
         typeof ctx.createStereoPanner === 'function' ? ctx.createStereoPanner() : null;
@@ -1083,46 +1186,45 @@ class CarSoundEngine {
   }
 
   public triggerGearShift(dir: 'up' | 'down', carClass: CarClass): void {
+    if (carClass === 'fe') return;
     if (!this.ctx || !this.engineOutGain || !this.canEmitOneShot()) return;
     const ctx = this.ctx;
     const now = ctx.currentTime;
 
     if (dir === 'up') {
-      // Brief 50 ms torque-cut dip
-      this.shiftDipUntil = performance.now() + 55;
+      this.shiftDipUntil = performance.now() + 50;
       try {
         this.engineOutGain.gain.cancelScheduledValues(now);
         this.engineOutGain.gain.setTargetAtTime(0.05, now, 0.008);
       } catch {
         // Ignore ramp conflicts
       }
-      // Subtle mechanical clunk
       if (this.noiseBuffer && this.dryBus) {
         const src = ctx.createBufferSource();
         src.buffer = this.noiseBuffer;
         const bp = ctx.createBiquadFilter();
         bp.type = 'bandpass';
-        bp.frequency.value = carClass === 'f1' ? 420 : 280;
-        bp.Q.value = 3.0;
+        bp.frequency.value = carClass === 'f1' ? SOLFEGGIO_HZ.F396 : SOLFEGGIO_HZ.F285;
+        bp.Q.value = 2.2;
         const g = ctx.createGain();
-        g.gain.setValueAtTime(0.11, now);
-        g.gain.exponentialRampToValueAtTime(0.001, now + 0.055);
+        g.gain.setValueAtTime(0.065, now);
+        g.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
         src.connect(bp);
         bp.connect(g);
         g.connect(this.dryBus);
         src.start(now);
-        src.stop(now + 0.065);
+        src.stop(now + 0.06);
       }
     } else {
-      // Downshift throttle blip + exhaust crack
-      this.triggerExhaustPop(carClass === 'f1' ? 0.55 : 0.72, carClass);
+      this.triggerExhaustPop(carClass === 'f1' ? 0.45 : 0.60, carClass);
     }
   }
 
   public triggerExhaustPop(intensity: number, carClass: CarClass): void {
+    if (carClass === 'fe') return;
     if (!this.ctx || !this.dryBus || !this.canEmitOneShot()) return;
     const nowMs = performance.now();
-    if (nowMs - this.lastPopMs < 95) return;
+    if (nowMs - this.lastPopMs < 110) return;
     this.lastPopMs = nowMs;
 
     const ctx = this.ctx;
@@ -1131,13 +1233,13 @@ class CarSoundEngine {
     const int01 = clampRange(intensity, 0.2, 1.0);
 
     for (let p = 0; p < count; p++) {
-      const t = baseNow + p * 0.068;
+      const t = baseNow + p * 0.072;
       const osc = ctx.createOscillator();
       const g = ctx.createGain();
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(carClass === 'f1' ? 210 : 145, t);
-      osc.frequency.exponentialRampToValueAtTime(48, t + 0.08);
-      g.gain.setValueAtTime(0.22 * int01, t);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(carClass === 'f1' ? SOLFEGGIO_HZ.F285 : SOLFEGGIO_HZ.F174, t);
+      osc.frequency.exponentialRampToValueAtTime(65, t + 0.085);
+      g.gain.setValueAtTime(0.11 * int01, t);
       g.gain.exponentialRampToValueAtTime(0.001, t + 0.095);
       osc.connect(g);
       g.connect(this.dryBus);
@@ -1150,17 +1252,17 @@ class CarSoundEngine {
         src.buffer = this.noiseBuffer;
         const bp = ctx.createBiquadFilter();
         bp.type = 'bandpass';
-        bp.frequency.value = carClass === 'rally' ? 920 : 1200;
-        bp.Q.value = 1.6;
+        bp.frequency.value = carClass === 'rally' ? SOLFEGGIO_HZ.F528 : SOLFEGGIO_HZ.F639;
+        bp.Q.value = 1.4;
         const ng = ctx.createGain();
-        ng.gain.setValueAtTime(0.18 * int01, t);
-        ng.gain.exponentialRampToValueAtTime(0.001, t + 0.085);
+        ng.gain.setValueAtTime(0.08 * int01, t);
+        ng.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
         src.connect(bp);
         bp.connect(ng);
         ng.connect(this.dryBus);
         if (this.tunnelSendGain) ng.connect(this.tunnelSendGain);
         src.start(t);
-        src.stop(t + 0.095);
+        src.stop(t + 0.09);
       }
     }
   }
@@ -1168,17 +1270,16 @@ class CarSoundEngine {
   public triggerTurboBlowOff(boostLevel: number): void {
     if (!this.ctx || !this.noiseBuffer || !this.dryBus || !this.canEmitOneShot()) return;
     const nowMs = performance.now();
-    if (nowMs - this.lastBovMs < 240) return;
+    if (nowMs - this.lastBovMs < 260) return;
     this.lastBovMs = nowMs;
 
     const ctx = this.ctx;
     const baseNow = ctx.currentTime;
     const strength = clampRange(boostLevel, 0.35, 1.0);
 
-    // Classic 3-pulse flutter ("pssh-tu-tu-tu")
     const offsets = [0, 0.068, 0.132];
-    const amps = [0.22, 0.14, 0.08];
-    const freqs = [3400, 2900, 2450];
+    const amps = [0.10, 0.065, 0.035];
+    const freqs = [SOLFEGGIO_HZ.F639, SOLFEGGIO_HZ.F528, SOLFEGGIO_HZ.F396];
 
     for (let k = 0; k < offsets.length; k++) {
       const t = baseNow + offsets[k];
@@ -1187,7 +1288,7 @@ class CarSoundEngine {
       const bp = ctx.createBiquadFilter();
       bp.type = 'bandpass';
       bp.frequency.setValueAtTime(freqs[k], t);
-      bp.Q.value = 3.6;
+      bp.Q.value = 2.4;
       const g = ctx.createGain();
       g.gain.setValueAtTime(amps[k] * strength, t);
       g.gain.exponentialRampToValueAtTime(0.001, t + 0.065);
@@ -1203,20 +1304,20 @@ class CarSoundEngine {
   public playImpact(intensity01: number, kind: 'wall' | 'car'): void {
     if (!this.canEmitOneShot() || !this.ctx || !this.dryBus) return;
     const nowMs = performance.now();
-    if (nowMs - this.lastImpactMs < 120) return;
+    if (nowMs - this.lastImpactMs < 130) return;
     this.lastImpactMs = nowMs;
 
     const ctx = this.ctx;
     const now = ctx.currentTime;
     const amt = clampRange(intensity01, 0.12, 1.0);
 
-    // Sub chassis thud
+    // Warm Solfeggio sub thud (174 -> 87 Hz)
     const thudOsc = ctx.createOscillator();
     const thudGain = ctx.createGain();
     thudOsc.type = 'sine';
-    thudOsc.frequency.setValueAtTime(kind === 'wall' ? 105 : 135, now);
-    thudOsc.frequency.exponentialRampToValueAtTime(34, now + 0.16);
-    thudGain.gain.setValueAtTime(0.45 * amt, now);
+    thudOsc.frequency.setValueAtTime(SOLFEGGIO_HZ.F174, now);
+    thudOsc.frequency.exponentialRampToValueAtTime(87, now + 0.16);
+    thudGain.gain.setValueAtTime(0.26 * amt, now);
     thudGain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
     thudOsc.connect(thudGain);
     thudGain.connect(this.dryBus);
@@ -1224,16 +1325,16 @@ class CarSoundEngine {
     thudOsc.start(now);
     thudOsc.stop(now + 0.2);
 
-    // Crunch noise burst
+    // Soft crunch noise burst centered at 396 Hz
     if (this.noiseBuffer) {
       const src = ctx.createBufferSource();
       src.buffer = this.noiseBuffer;
       const bp = ctx.createBiquadFilter();
       bp.type = 'bandpass';
-      bp.frequency.value = kind === 'car' ? 1450 : 620;
-      bp.Q.value = 1.4;
+      bp.frequency.value = kind === 'car' ? SOLFEGGIO_HZ.F528 : SOLFEGGIO_HZ.F396;
+      bp.Q.value = 1.2;
       const ng = ctx.createGain();
-      ng.gain.setValueAtTime(0.32 * amt, now);
+      ng.gain.setValueAtTime(0.16 * amt, now);
       ng.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
       src.connect(bp);
       bp.connect(ng);
@@ -1266,10 +1367,11 @@ class CarSoundEngine {
     };
 
     if (isGreen) {
-      playTone(880, 0.28, 0.14);
-      playTone(1320, 0.24, 0.08);
+      playTone(SOLFEGGIO_HZ.F528, 0.30, 0.09);
+      playTone(SOLFEGGIO_HZ.F639, 0.28, 0.07);
+      playTone(SOLFEGGIO_HZ.F963, 0.24, 0.05);
     } else {
-      playTone(440, 0.12, 0.11);
+      playTone(SOLFEGGIO_HZ.F396, 0.14, 0.09);
     }
   }
 
@@ -1277,19 +1379,23 @@ class CarSoundEngine {
     if (!this.canEmitOneShot() || !this.ctx || !this.compressor) return;
     const ctx = this.ctx;
     const now = ctx.currentTime;
-    const notes = isFinish ? [660, 880, 1100, 1320] : isBestLap ? [740, 988, 1318] : [660, 880];
+    const notes = isFinish
+      ? [SOLFEGGIO_HZ.F396, SOLFEGGIO_HZ.F528, SOLFEGGIO_HZ.F639, SOLFEGGIO_HZ.F963]
+      : isBestLap
+      ? [SOLFEGGIO_HZ.F528, SOLFEGGIO_HZ.F639, SOLFEGGIO_HZ.F852]
+      : [SOLFEGGIO_HZ.F528, SOLFEGGIO_HZ.F639];
     notes.forEach((freq, idx) => {
-      const t = now + idx * 0.075;
+      const t = now + idx * 0.08;
       const osc = ctx.createOscillator();
       const g = ctx.createGain();
       osc.type = 'sine';
       osc.frequency.setValueAtTime(freq, t);
-      g.gain.setValueAtTime(0.10, t);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+      g.gain.setValueAtTime(0.075, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.19);
       osc.connect(g);
       g.connect(this.compressor!);
       osc.start(t);
-      osc.stop(t + 0.18);
+      osc.stop(t + 0.21);
     });
   }
 
@@ -1299,11 +1405,11 @@ class CarSoundEngine {
     const now = ctx.currentTime;
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(920, now);
-    osc.frequency.linearRampToValueAtTime(1480, now + 0.06);
-    osc.frequency.setValueAtTime(1260, now + 0.12);
-    g.gain.setValueAtTime(0.09, now);
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(SOLFEGGIO_HZ.F396, now);
+    osc.frequency.linearRampToValueAtTime(SOLFEGGIO_HZ.F528, now + 0.08);
+    osc.frequency.setValueAtTime(SOLFEGGIO_HZ.F417, now + 0.13);
+    g.gain.setValueAtTime(0.065, now);
     g.gain.exponentialRampToValueAtTime(0.001, now + 0.19);
     osc.connect(g);
     g.connect(this.dryBus);
@@ -1315,18 +1421,59 @@ class CarSoundEngine {
     if (!this.canEmitOneShot() || !this.ctx || !this.compressor) return;
     const ctx = this.ctx;
     const now = ctx.currentTime;
-    [587.3, 880].forEach((freq, idx) => {
-      const t = now + idx * 0.09;
+    [SOLFEGGIO_HZ.F528, SOLFEGGIO_HZ.F852].forEach((freq, idx) => {
+      const t = now + idx * 0.095;
       const osc = ctx.createOscillator();
       const g = ctx.createGain();
       osc.type = 'sine';
       osc.frequency.setValueAtTime(freq, t);
-      g.gain.setValueAtTime(0.12, t);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.20);
+      g.gain.setValueAtTime(0.085, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
       osc.connect(g);
       g.connect(this.compressor!);
       osc.start(t);
-      osc.stop(t + 0.22);
+      osc.stop(t + 0.24);
+    });
+  }
+
+  public playAttackModeActivate(): void {
+    if (!this.canEmitOneShot() || !this.ctx || !this.compressor) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    [SOLFEGGIO_HZ.F528, SOLFEGGIO_HZ.F639, SOLFEGGIO_HZ.F963].forEach((freq, idx) => {
+      const t = now + idx * 0.06;
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, t);
+      g.gain.setValueAtTime(0.08, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+      osc.connect(g);
+      g.connect(this.compressor!);
+      osc.start(t);
+      osc.stop(t + 0.24);
+    });
+  }
+
+  public playChargePulse(): void {
+    if (!this.canEmitOneShot() || !this.ctx || !this.compressor) return;
+    const nowMs = performance.now();
+    if (nowMs - this.lastChargePulseMs < 650) return;
+    this.lastChargePulseMs = nowMs;
+
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    [SOLFEGGIO_HZ.F396, SOLFEGGIO_HZ.F528].forEach((freq, idx) => {
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, now);
+      g.gain.setValueAtTime(idx === 0 ? 0.05 : 0.04, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
+      osc.connect(g);
+      g.connect(this.compressor!);
+      osc.start(now);
+      osc.stop(now + 0.26);
     });
   }
 
@@ -1334,10 +1481,27 @@ class CarSoundEngine {
     if (input.carClass !== this.lastClass) {
       this.lastClass = input.carClass;
       this.mem = createEngineMemory(input.carClass);
+      this.cruiseSteadySec = 0;
     }
 
     const acoustic = computeEngineAcoustics(input, this.mem);
     this.mem = acoustic.memory;
+
+    const dt = clampRange(input.dt, 0.001, 0.08);
+    if (
+      input.speedKmh > 25 &&
+      Math.abs(input.speedKmh - this.prevSpeedKmh) < 3.5 &&
+      Math.abs(acoustic.rpmNorm - this.prevRpmNorm) < 0.035 &&
+      !input.attackModeActive &&
+      input.brake < 0.05
+    ) {
+      this.cruiseSteadySec = Math.min(10, this.cruiseSteadySec + dt);
+    } else {
+      this.cruiseSteadySec = Math.max(0, this.cruiseSteadySec - dt * 4.5);
+    }
+    this.prevSpeedKmh = input.speedKmh;
+    this.prevRpmNorm = acoustic.rpmNorm;
+    const cruiseRelax = clamp01((this.cruiseSteadySec - 1.5) / 2.5);
 
     if (!this.ctx || !this.isInitialized) return acoustic;
     const now = this.ctx.currentTime;
@@ -1345,6 +1509,14 @@ class CarSoundEngine {
     if (!input.active || this.tabHidden || getAudioSettings().muted) {
       this.silence();
       return acoustic;
+    }
+
+    const wantElectricWave = input.carClass === 'fe';
+    if (wantElectricWave !== this.waveIsElectric) {
+      this.waveIsElectric = wantElectricWave;
+      if (this.oscA) this.oscA.type = wantElectricWave ? 'sine' : 'triangle';
+      if (this.oscB) this.oscB.type = wantElectricWave ? 'sine' : 'triangle';
+      if (this.oscC) this.oscC.type = wantElectricWave ? 'triangle' : 'sine';
     }
 
     const prof = CAR_AUDIO_PROFILES[input.carClass] ?? CAR_AUDIO_PROFILES.f1;
@@ -1369,54 +1541,57 @@ class CarSoundEngine {
       rpmNorm: acoustic.rpmNorm,
       fundamentalHz: acoustic.fundamentalHz,
       boostLevel: acoustic.boostLevel,
+      isRegenerating: input.isRegenerating,
+      attackModeActive: input.attackModeActive,
+      cruiseRelax,
     });
 
-    // Apply class harmonics & frequencies smoothly
-    this.safeSetTarget(this.oscA?.frequency, acoustic.fundamentalHz * prof.harmonics[0], now, 0.016);
-    this.safeSetTarget(this.oscB?.frequency, acoustic.fundamentalHz * prof.harmonics[1], now, 0.016);
-    this.safeSetTarget(this.oscC?.frequency, acoustic.fundamentalHz * prof.harmonics[2], now, 0.016);
+    // Apply Solfeggio-anchored class harmonics & frequencies smoothly
+    this.safeSetTarget(this.oscA?.frequency, acoustic.fundamentalHz * prof.harmonics[0], now, 0.018);
+    this.safeSetTarget(this.oscB?.frequency, acoustic.fundamentalHz * prof.harmonics[1], now, 0.018);
+    this.safeSetTarget(this.oscC?.frequency, acoustic.fundamentalHz * prof.harmonics[2], now, 0.018);
     this.safeSetTarget(this.oscGainA?.gain, prof.harmonicGains[0], now, 0.04);
     this.safeSetTarget(this.oscGainB?.gain, prof.harmonicGains[1], now, 0.04);
     this.safeSetTarget(this.oscGainC?.gain, prof.harmonicGains[2], now, 0.04);
 
-    this.safeSetTarget(this.engineLowpass?.frequency, mix.engineFilterHz, now, 0.025);
-    this.safeSetTarget(this.engineFormant?.frequency, mix.formantHz, now, 0.025);
+    this.safeSetTarget(this.engineLowpass?.frequency, mix.engineFilterHz, now, 0.03);
+    this.safeSetTarget(this.engineFormant?.frequency, mix.formantHz, now, 0.03);
     this.safeSetTarget(this.engineFormant?.Q, prof.formantQ, now, 0.04);
 
     const inShiftDip = performance.now() < this.shiftDipUntil;
-    this.safeSetTarget(this.engineOutGain?.gain, inShiftDip ? 0.05 : mix.engineGain, now, 0.02);
+    this.safeSetTarget(this.engineOutGain?.gain, inShiftDip ? 0.05 : mix.engineGain, now, 0.025);
 
     this.safeSetTarget(this.turboOsc?.frequency, mix.turboHz, now, 0.03);
     this.safeSetTarget(this.turboGain?.gain, mix.turboGain, now, 0.03);
 
-    this.safeSetTarget(this.whineOsc?.frequency, mix.gearWhineHz, now, 0.025);
-    this.safeSetTarget(this.whineGain?.gain, mix.gearWhineGain, now, 0.03);
+    this.safeSetTarget(this.whineOsc?.frequency, mix.gearWhineHz, now, 0.03);
+    this.safeSetTarget(this.whineGain?.gain, mix.gearWhineGain, now, 0.035);
 
-    this.safeSetTarget(this.tireBand1?.frequency, mix.tireSquealHz, now, 0.025);
-    this.safeSetTarget(this.tireBand2?.frequency, mix.tireSquealHz * 1.54, now, 0.025);
-    this.safeSetTarget(this.tireGain?.gain, mix.tireSquealGain, now, 0.03);
+    this.safeSetTarget(this.tireBand1?.frequency, mix.tireSquealHz, now, 0.03);
+    this.safeSetTarget(this.tireBand2?.frequency, mix.tireSquealHz * 1.33, now, 0.03);
+    this.safeSetTarget(this.tireGain?.gain, mix.tireSquealGain, now, 0.035);
 
-    this.safeSetTarget(this.windBand?.frequency, mix.windHz, now, 0.04);
-    this.safeSetTarget(this.windGain?.gain, mix.windGain, now, 0.045);
+    this.safeSetTarget(this.windBand?.frequency, mix.windHz, now, 0.045);
+    this.safeSetTarget(this.windGain?.gain, mix.windGain, now, 0.05);
 
     this.safeSetTarget(this.curbLfo?.frequency, mix.curbModHz, now, 0.02);
     this.safeSetTarget(this.curbLfoGain?.gain, 0.45, now, 0.02);
     this.safeSetTarget(this.curbAmpNode?.gain, 0.55, now, 0.02);
-    this.safeSetTarget(this.curbOutGain?.gain, mix.curbGain, now, 0.025);
+    this.safeSetTarget(this.curbOutGain?.gain, mix.curbGain, now, 0.03);
 
-    this.safeSetTarget(this.offroadBand?.frequency, mix.offroadHz, now, 0.03);
-    this.safeSetTarget(this.offroadGain?.gain, mix.offroadGain, now, 0.03);
+    this.safeSetTarget(this.offroadBand?.frequency, mix.offroadHz, now, 0.035);
+    this.safeSetTarget(this.offroadGain?.gain, mix.offroadGain, now, 0.035);
 
     this.safeSetTarget(this.tunnelOutGain?.gain, mix.tunnelWetGain, now, 0.06);
 
-    // One-shot automatic triggers
+    // One-shot automatic triggers (skipped for electric cars)
     if (acoustic.shiftEvent) {
       this.triggerGearShift(acoustic.shiftEvent, input.carClass);
     }
     if (acoustic.triggerBov) {
       this.triggerTurboBlowOff(acoustic.boostLevel);
     } else if (acoustic.triggerLiftPop) {
-      this.triggerExhaustPop(input.carClass === 'rally' ? 0.85 : 0.6, input.carClass);
+      this.triggerExhaustPop(input.carClass === 'rally' ? 0.72 : 0.52, input.carClass);
     }
 
     return acoustic;
@@ -1449,7 +1624,6 @@ class CarSoundEngine {
 
     const now = this.ctx.currentTime;
 
-    // Normalize listener quaternion and compute screen-right vector (-X rotated by q)
     const qLen = Math.hypot(listener.qx, listener.qy, listener.qz, listener.qw) || 1;
     const qx = listener.qx / qLen;
     const qy = listener.qy / qLen;
@@ -1488,14 +1662,14 @@ class CarSoundEngine {
       const distFade = Math.max(0, 1 - dist / OPPONENT_MAX_DIST_M);
       const attenuation = (1 / (1 + (dist / 8) * (dist / 8) * 0.42)) * distFade;
       const speedKmh = Math.max(0, Number.isFinite(car.speedKmh) ? car.speedKmh : 0);
-      const speedGain = 0.30 + 0.70 * Math.min(1, speedKmh / 150);
-      const targetGain = Math.min(0.28, attenuation * speedGain * 0.34);
+      const speedGain = 0.28 + 0.72 * Math.min(1, speedKmh / 150);
+      const targetGain = Math.min(0.16, attenuation * speedGain * 0.20);
 
       const relVx = (car.vx || 0) - (listener.vx || 0);
       const relVy = (car.vy || 0) - (listener.vy || 0);
       const relVz = (car.vz || 0) - (listener.vz || 0);
       const vApproach = -(relVx * dx + relVy * dy + relVz * dz) / Math.max(1.5, dist);
-      const doppler = clampRange(1 + vApproach / 343, 0.78, 1.28);
+      const doppler = clampRange(1 + vApproach / 343, 0.82, 1.22);
 
       const prof = CAR_AUDIO_PROFILES[car.carClass] ?? CAR_AUDIO_PROFILES.f1;
       const speedNorm = clamp01(speedKmh / 240);
@@ -1516,7 +1690,7 @@ class CarSoundEngine {
         doppler *
         hashDetune(car.id);
 
-      const lpHz = 420 + (1 - Math.min(1, dist / 90)) * 2200;
+      const lpHz = 360 + (1 - Math.min(1, dist / 90)) * 840;
       const pan = clampRange(
         ((dx * screenRightX + dy * screenRightY + dz * screenRightZ) / Math.max(2.0, dist)) * 0.9,
         -0.9,

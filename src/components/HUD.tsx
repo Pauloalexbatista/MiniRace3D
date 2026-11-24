@@ -79,14 +79,19 @@ export const HUD: React.FC<HUDProps> = React.memo((props) => {
     return '8';
   };
 
-  const gear =
-    props.speedKmh != null
-      ? getGear(speedKmh)
-      : store.gear < 0
+  const gear = store.isElectric
+    ? store.gear < 0
       ? 'R'
-      : store.gear === 0
+      : store.gear === 0 && speedKmh < 2
       ? 'N'
-      : String(store.gear);
+      : 'E'
+    : props.speedKmh != null
+    ? getGear(speedKmh)
+    : store.gear < 0
+    ? 'R'
+    : store.gear === 0
+    ? 'N'
+    : String(store.gear);
   const rpmNorm =
     props.speedKmh != null
       ? Math.max(0, Math.min(1, speedKmh / 300))
@@ -101,32 +106,40 @@ export const HUD: React.FC<HUDProps> = React.memo((props) => {
 
   const enginePct = Math.round(engineHealth);
   const tirePct = Math.round(tireHealth);
+  const batteryPct = Math.round(store.batteryPct);
   const engineColor = getHealthColor(enginePct);
   const tireColor = getHealthColor(tirePct);
-  const engineCapPct = Math.round(25 + 0.75 * enginePct);
+  const batteryColor =
+    batteryPct >= 45 ? '#06b6d4' : batteryPct >= 20 ? '#facc15' : '#ef4444';
+  const engineCapPct = Math.round(45 + 0.55 * enginePct);
   const tireCapPct =
     tirePct < 45 ? Math.round((1 - 0.30 * Math.min(1, (45 - tirePct) / 25)) * 100) : 100;
 
   const getSurfaceInfo = () => {
     if (inPitBoxZone) {
-      return { label: '🔧 ZONA DE BOX (REPARAR 3s)', color: '#facc15' };
+      return {
+        label: store.isElectric
+          ? '⚡ ZONA DE BOX (CARREGAR / REPARAR 3s)'
+          : '🔧 ZONA DE BOX (REPARAR 3s)',
+        color: '#facc15',
+      };
     }
     switch (surface) {
       case 'TRACK':
         return { label: '🏁 ASFALTO (100%)', color: '#10b981' };
       case 'CURB':
-        return { label: '⚪ FAIXA BRANCA (-10% VEL.)', color: '#f8fafc' };
+        return { label: '⚪ FAIXA BRANCA (-5% VEL.)', color: '#f8fafc' };
       case 'CURB_WIDE':
-        return { label: '🟡 FAIXA AMARELA (-20% VEL.)', color: '#facc15' };
+        return { label: '🟡 FAIXA AMARELA (-10% VEL.)', color: '#facc15' };
       case 'CURB_APEX':
-        return { label: '🔴 FAIXA VERMELHA (-30% VEL.)', color: '#ef4444' };
+        return { label: '🔴 FAIXA VERMELHA (-15% VEL.)', color: '#ef4444' };
       case 'GRASS':
-        return { label: '🌿 RELVA (-40% VEL.)', color: '#4ade80' };
+        return { label: '🌿 RELVA (-20% VEL.)', color: '#4ade80' };
       case 'SAND':
-        return { label: '🏜️ AREIA (-50% VEL.)', color: '#f59e0b' };
+        return { label: '🏜️ AREIA (-25% VEL.)', color: '#f59e0b' };
       case 'GRAVEL':
       default:
-        return { label: '🪨 GRAVILHA (-60% VEL.)', color: '#a8a29e' };
+        return { label: '🪨 GRAVILHA (-30% VEL.)', color: '#a8a29e' };
     }
   };
 
@@ -332,10 +345,22 @@ export const HUD: React.FC<HUDProps> = React.memo((props) => {
                 ? '#fbbf24'
                 : '#6ee7b7'
           }}>
-            {pitStopStatus === 'slow_down' && '🟡 ZONA DE BOX — PÁRA O CARRO (3s) PARA REPARAR'}
-            {pitStopStatus === 'repairing' && `🔧 A REPARAR NA BOX... ${pitStopRemainingSec.toFixed(1)}s`}
-            {pitStopStatus === 'done' && '✅ BOX CONCLUÍDA! MOTOR E PNEUS A 100%!'}
-            {pitStopStatus === 'full' && '✅ ZONA DE BOX — CARRO A 100%'}
+            {pitStopStatus === 'slow_down' &&
+              (store.isElectric
+                ? '⚡ ZONA DE BOX — PÁRA O CARRO (3s) PARA CARREGAR E REPARAR'
+                : '🟡 ZONA DE BOX — PÁRA O CARRO (3s) PARA REPARAR')}
+            {pitStopStatus === 'repairing' &&
+              (store.isElectric
+                ? `⚡ PIT BOOST — A CARREGAR BATERIA E REPARAR... ${pitStopRemainingSec.toFixed(1)}s`
+                : `🔧 A REPARAR NA BOX... ${pitStopRemainingSec.toFixed(1)}s`)}
+            {pitStopStatus === 'done' &&
+              (store.isElectric
+                ? '✅ PIT BOOST CONCLUÍDO! BATERIA, MOTOR E PNEUS A 100%!'
+                : '✅ BOX CONCLUÍDA! MOTOR E PNEUS A 100%!')}
+            {pitStopStatus === 'full' &&
+              (store.isElectric
+                ? '✅ ZONA DE BOX — BATERIA E CARRO A 100%'
+                : '✅ ZONA DE BOX — CARRO A 100%')}
           </div>
           {pitStopStatus === 'repairing' && (
             <div style={{
@@ -356,6 +381,43 @@ export const HUD: React.FC<HUDProps> = React.memo((props) => {
           )}
         </div>
       )}
+
+      {/* TOP CENTER: FORMULA E ATTACK MODE / CHARGE ZONE PILL */}
+      {store.isElectric &&
+        !finishBanner &&
+        pitStopStatus === 'none' &&
+        (raceStartPhase === 'racing' || !showLapTimer) &&
+        (store.attackModeRemainingSec > 0 || store.isCharging) && (
+          <div
+            style={{
+              position: 'absolute',
+              top: 68,
+              left: '50%',
+              transform: 'translateX(-50%)',
+              background: store.attackModeRemainingSec > 0
+                ? 'rgba(88, 28, 135, 0.92)'
+                : 'rgba(6, 78, 59, 0.92)',
+              backdropFilter: 'blur(12px)',
+              border: store.attackModeRemainingSec > 0
+                ? '2px solid #e879f9'
+                : '2px solid #34d399',
+              borderRadius: 999,
+              padding: '7px 18px',
+              color: '#f8fafc',
+              fontFamily: 'system-ui, -apple-system, sans-serif',
+              fontSize: 12,
+              fontWeight: 900,
+              boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+              zIndex: 54,
+              pointerEvents: 'none',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {store.attackModeRemainingSec > 0
+              ? `⚡ ATTACK MODE ATIVO • +14% VEL. • ${store.attackModeRemainingSec.toFixed(1)}s`
+              : '🔋 ZONA DE CARGA • A RECARREGAR BATERIA'}
+          </div>
+        )}
       {/* TOP LEFT: F1 LAP TIMER & BEST LAP (1º LUGAR) - apenas no modo Corrida/Jogar */}
       {showLapTimer && (
       <div style={{
@@ -578,7 +640,7 @@ export const HUD: React.FC<HUDProps> = React.memo((props) => {
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 12 }}>
           {/* Gear Badge */}
           <div style={{
-            background: gear === 'R' ? '#f59e0b' : '#e11d48',
+            background: gear === 'R' ? '#f59e0b' : store.isElectric ? '#06b6d4' : '#e11d48',
             color: '#fff',
             fontWeight: 900,
             fontSize: 26,
@@ -588,7 +650,11 @@ export const HUD: React.FC<HUDProps> = React.memo((props) => {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            boxShadow: '0 4px 14px rgba(225, 29, 72, 0.4)'
+            boxShadow: gear === 'R'
+              ? '0 4px 14px rgba(245, 158, 11, 0.4)'
+              : store.isElectric
+              ? '0 4px 14px rgba(6, 182, 212, 0.45)'
+              : '0 4px 14px rgba(225, 29, 72, 0.4)'
           }}>
             {gear}
           </div>
@@ -707,6 +773,21 @@ export const HUD: React.FC<HUDProps> = React.memo((props) => {
               cursor: 'pointer',
             }}
           />
+          <span
+            title="Áudio harmónico afinado em frequências Solfeggio (174–963 Hz) com redução automática de fadiga em cruzeiro"
+            style={{
+              fontSize: 8.5,
+              fontWeight: 800,
+              color: '#a5f3fc',
+              background: 'rgba(6, 182, 212, 0.14)',
+              border: '1px solid rgba(34, 211, 238, 0.3)',
+              borderRadius: 6,
+              padding: '3px 5px',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            🎵 Solfeggio
+          </span>
         </div>
 
         {/* Throttle & Brake Pedals Bar */}
@@ -738,13 +819,58 @@ export const HUD: React.FC<HUDProps> = React.memo((props) => {
           </div>
         </div>
 
-        {/* Engine & Tire Health Bars */}
+        {/* Formula E Battery & Engine/Tire Health Bars */}
         <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 5, marginTop: 4 }}>
+          {store.isElectric && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 9.5, fontWeight: 800 }}>
+                <span style={{ color: '#67e8f9' }}>⚡ BATERIA</span>
+                <span style={{ color: batteryColor }}>
+                  {batteryPct}%{batteryPct <= 1 ? ' (⚠️ MODO ECO)' : ''}
+                </span>
+              </div>
+              <div style={{ height: 6, background: '#334155', borderRadius: 3, overflow: 'hidden' }}>
+                <div style={{
+                  height: '100%',
+                  width: `${batteryPct}%`,
+                  background: store.attackModeRemainingSec > 0
+                    ? 'linear-gradient(90deg, #06b6d4, #e879f9)'
+                    : batteryColor,
+                  transition: 'width 0.1s'
+                }} />
+              </div>
+              {(store.attackModeRemainingSec > 0 || store.isCharging || store.isRegenerating || store.isDrafting) && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {store.attackModeRemainingSec > 0 && (
+                    <span style={{ fontSize: 8.5, fontWeight: 900, padding: '1px 5px', borderRadius: 4, background: 'rgba(232, 121, 249, 0.25)', color: '#f5d0fe', border: '1px solid rgba(232, 121, 249, 0.5)' }}>
+                      ⚡ ATTACK {store.attackModeRemainingSec.toFixed(1)}s
+                    </span>
+                  )}
+                  {store.isCharging && (
+                    <span style={{ fontSize: 8.5, fontWeight: 900, padding: '1px 5px', borderRadius: 4, background: 'rgba(16, 185, 129, 0.25)', color: '#6ee7b7', border: '1px solid rgba(52, 211, 153, 0.5)' }}>
+                      🔋 +CARGA
+                    </span>
+                  )}
+                  {store.isRegenerating && (
+                    <span style={{ fontSize: 8.5, fontWeight: 900, padding: '1px 5px', borderRadius: 4, background: 'rgba(6, 182, 212, 0.22)', color: '#67e8f9', border: '1px solid rgba(34, 211, 238, 0.45)' }}>
+                      ♻️ REGEN
+                    </span>
+                  )}
+                  {store.isDrafting && (
+                    <span style={{ fontSize: 8.5, fontWeight: 900, padding: '1px 5px', borderRadius: 4, background: 'rgba(56, 189, 248, 0.22)', color: '#bae6fd', border: '1px solid rgba(56, 189, 248, 0.45)' }}>
+                      💨 CONE
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 9.5, fontWeight: 800 }}>
               <span style={{ color: '#cbd5e1' }}>🔧 MOTOR</span>
               <span style={{ color: engineColor }}>
-                {enginePct}%{enginePct <= 20 ? ` (MÍN. • V.Máx ${engineCapPct}%)` : enginePct < 99 ? ` (V.Máx ${engineCapPct}%)` : ''}
+                {enginePct}%{enginePct <= 35 ? ` (MÍN. • V.Máx ${engineCapPct}%)` : enginePct < 99 ? ` (V.Máx ${engineCapPct}%)` : ''}
               </span>
             </div>
             <div style={{ height: 6, background: '#334155', borderRadius: 3, overflow: 'hidden' }}>

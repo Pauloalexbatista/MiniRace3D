@@ -82,7 +82,7 @@ import type { useRaceClient } from '../multiplayer/useRaceClient';
 const PROFILE_STORAGE_KEY = 'minirace3d_driver_profile';
 const TUNINGS_STORAGE_KEY = 'minirace3d_race_tunings';
 const SAVED_CIRCUITS_STORAGE_KEY = 'minirace3d_saved_circuits';
-const VALID_CAR_CLASSES: CarClass[] = ['f1', 'gt', 'rally', 'drift'];
+const VALID_CAR_CLASSES: CarClass[] = ['f1', 'fe', 'gt', 'rally', 'drift'];
 const EMPTY_PATCHES: SceneryPatch[] = [];
 const EMPTY_BRANCHES: RoadBranch[] = [];
 const EMPTY_ROOM_PLAYERS: RoomPlayerInfo[] = [];
@@ -159,6 +159,7 @@ function loadInitialProfile(): DriverProfile {
 function loadInitialTunings(profile: DriverProfile): Record<CarClass, CarTuning> {
   const out: Record<CarClass, CarTuning> = {
     f1: { ...CAR_CLASS_DEFAULTS.f1, primaryColor: profile.primaryColor, secondaryColor: profile.secondaryColor },
+    fe: { ...CAR_CLASS_DEFAULTS.fe, primaryColor: profile.primaryColor, secondaryColor: profile.secondaryColor },
     gt: { ...CAR_CLASS_DEFAULTS.gt, primaryColor: profile.primaryColor, secondaryColor: profile.secondaryColor },
     rally: { ...CAR_CLASS_DEFAULTS.rally, primaryColor: profile.primaryColor, secondaryColor: profile.secondaryColor },
     drift: { ...CAR_CLASS_DEFAULTS.drift, primaryColor: profile.primaryColor, secondaryColor: profile.secondaryColor },
@@ -1655,6 +1656,7 @@ export const RaceMode: React.FC<RaceModeProps> = ({
                 showLayers={true}
                 showControlPoints={false}
                 showRedRibbon={false}
+                showElectricZones={activeCarCategory === 'fe' || myCarClass === 'fe' || activeCarCategory === 'open'}
                 theme={activeEnvTheme}
                 trackThemeId={(activeRaceCircuit.trackThemeId as any) || 'f1_modern'}
               />
@@ -1662,10 +1664,12 @@ export const RaceMode: React.FC<RaceModeProps> = ({
               {/* Local Driver Physics Car */}
               <RapierCarController
                 spline={currentSpline}
+                controlPoints={activeRaceCircuit.controlPoints}
                 isClosed={isClosed}
                 isRaceActive={true}
                 branches={activeRaceCircuit.branches ?? EMPTY_BRANCHES}
                 pitSpline={currentPitSpline}
+                nearbyCarDotsRef={minimapDotsRef}
                 groundY={groundY}
                 cameraMode={cameraMode}
                 speedPreset={activeSpeedPreset}
@@ -1691,7 +1695,7 @@ export const RaceMode: React.FC<RaceModeProps> = ({
                   .filter((p) => p.id !== myDriverId)
                   .map((p) => {
                     const slotIdx = Math.max(0, Math.min(11, p.gridSlot));
-                    const initPose = p.carClass === 'f1' ? cachedRemotePosesF1[slotIdx] : cachedRemotePosesOther[slotIdx];
+                    const initPose = p.carClass === 'f1' || p.carClass === 'fe' ? cachedRemotePosesF1[slotIdx] : cachedRemotePosesOther[slotIdx];
                     const st = standingsById[p.id];
                     return (
                       <RemoteCar3D
@@ -1734,7 +1738,7 @@ export const RaceMode: React.FC<RaceModeProps> = ({
               {!isAiAuthority &&
                 activeAiRacers.map((bot) => {
                   const slotIdx = Math.max(0, Math.min(11, bot.gridSlot));
-                  const initPose = bot.carClass === 'f1' ? cachedRemotePosesF1[slotIdx] : cachedRemotePosesOther[slotIdx];
+                  const initPose = bot.carClass === 'f1' || bot.carClass === 'fe' ? cachedRemotePosesF1[slotIdx] : cachedRemotePosesOther[slotIdx];
                   const st = standingsById[bot.id];
                   return (
                     <RemoteCar3D
@@ -3046,8 +3050,8 @@ export const RaceMode: React.FC<RaceModeProps> = ({
             <label style={{ fontSize: 11, fontWeight: 800, color: '#94a3b8', display: 'block', marginBottom: 5 }}>
               Tipo de Carro / Categoria
             </label>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 6 }}>
-              {(['f1', 'gt', 'rally', 'drift', 'open'] as CarCategory[]).map((cat) => {
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
+              {(['f1', 'fe', 'gt', 'rally', 'drift', 'open'] as CarCategory[]).map((cat) => {
                 const m = CAR_CATEGORY_META[cat];
                 const active = createCategory === cat;
                 return (

@@ -1959,6 +1959,74 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
                     </div>
                   </div>
 
+                  {/* 3c. ZONAS FÓRMULA E NESTE PONTO */}
+                  {!isEditingBranch && (
+                    <div
+                      style={{
+                        background: '#0b1329',
+                        padding: 10,
+                        borderRadius: 8,
+                        border: activePt.isAttackZone
+                          ? '1px solid #06b6d4'
+                          : activePt.isChargeZone
+                          ? '1px solid #10b981'
+                          : '1px solid #1e293b',
+                        marginBottom: 10,
+                      }}
+                    >
+                      <div style={{ fontSize: 11, fontWeight: 800, color: '#67e8f9', marginBottom: 6 }}>
+                        ⚡ Zonas Fórmula E neste ponto
+                      </div>
+                      <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+                        <button
+                          onClick={() =>
+                            props.onUpdateNodeProperties?.(
+                              { isAttackZone: !activePt.isAttackZone, isChargeZone: false },
+                              false
+                            )
+                          }
+                          style={{
+                            flex: 1,
+                            background: activePt.isAttackZone ? 'rgba(6, 182, 212, 0.28)' : 'rgba(30, 41, 59, 0.6)',
+                            color: activePt.isAttackZone ? '#67e8f9' : '#cbd5e1',
+                            border: activePt.isAttackZone ? '1px solid #06b6d4' : '1px solid rgba(255,255,255,0.1)',
+                            borderRadius: 5,
+                            padding: '6px 8px',
+                            fontSize: 10,
+                            fontWeight: 800,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {activePt.isAttackZone ? '✓ ⚡ Zona de Ataque' : '⚡ Zona de Ataque'}
+                        </button>
+                        <button
+                          onClick={() =>
+                            props.onUpdateNodeProperties?.(
+                              { isChargeZone: !activePt.isChargeZone, isAttackZone: false },
+                              false
+                            )
+                          }
+                          style={{
+                            flex: 1,
+                            background: activePt.isChargeZone ? 'rgba(16, 185, 129, 0.28)' : 'rgba(30, 41, 59, 0.6)',
+                            color: activePt.isChargeZone ? '#6ee7b7' : '#cbd5e1',
+                            border: activePt.isChargeZone ? '1px solid #10b981' : '1px solid rgba(255,255,255,0.1)',
+                            borderRadius: 5,
+                            padding: '6px 8px',
+                            fontSize: 10,
+                            fontWeight: 800,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {activePt.isChargeZone ? '✓ 🔋 Zona de Carga' : '🔋 Zona de Carga'}
+                        </button>
+                      </div>
+                      <div style={{ fontSize: 9.5, color: '#94a3b8', lineHeight: 1.35 }}>
+                        Opcional: se não marcares nenhuma zona, as corridas de Fórmula E criam automaticamente 1 Zona de Ataque + 1 Zona de Carga (+ Box).
+                      </div>
+                    </div>
+                  )}
+
                   {/* 4. INCLINAÇÃO LATERAL (BANKING) */}
                   <div style={{ background: '#0b1329', padding: 10, borderRadius: 8, border: '1px solid #1e293b', marginBottom: 12 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
@@ -2498,14 +2566,14 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
               </div>
             )}
 
-            {/* CLASSE DE CARRO (F1, GT, RALLY, DRIFT) */}
+            {/* CLASSE DE CARRO (F1, FE, GT, RALLY, DRIFT) */}
             {props.onChangeCarClass && (
               <div style={{ background: 'rgba(30, 41, 59, 0.5)', padding: 12, borderRadius: 10, border: '1px solid rgba(255,255,255,0.08)' }}>
                 <span style={{ fontSize: 11, fontWeight: 800, color: '#38bdf8', textTransform: 'uppercase' }}>
                   🏎️ Classe de Carro
                 </span>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6, marginTop: 8 }}>
-                  {(['f1', 'gt', 'rally', 'drift'] as CarClass[]).map((cls) => {
+                  {(['f1', 'fe', 'gt', 'rally', 'drift'] as CarClass[]).map((cls) => {
                     const info = CAR_CLASS_DEFAULTS[cls];
                     const active = (props.carClass || 'f1') === cls;
                     return (

@@ -19,6 +19,7 @@ function readStoredPresenceProfile(): {
       const parsed = JSON.parse(raw);
       const cls: CarClass =
         parsed.carClass === 'f1' ||
+        parsed.carClass === 'fe' ||
         parsed.carClass === 'gt' ||
         parsed.carClass === 'rally' ||
         parsed.carClass === 'drift'

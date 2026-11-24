@@ -255,7 +255,7 @@ export const AIRacerManager: React.FC<AIRacerManagerProps> = React.memo(({
   const initialSlots = useMemo(() => {
     return aiRacers.map((bot) => {
       const pose = computeGridSlotPose(spline, isClosed, bot.gridSlot);
-      const rideLift = bot.carClass === 'f1' ? 0.04 : 0.01;
+      const rideLift = bot.carClass === 'f1' || bot.carClass === 'fe' ? 0.04 : 0.01;
       const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), pose.yaw);
       const e = new THREE.Euler().setFromQuaternion(q);
       return {
@@ -326,7 +326,7 @@ export const AIRacerManager: React.FC<AIRacerManagerProps> = React.memo(({
 
       const { pose, quat } = initialSlots[idx];
       const wrappedS = L > 0 ? ((pose.sCar % L) + L) % L : 0;
-      const rideLift = bot.carClass === 'f1' ? 0.04 : 0.01;
+      const rideLift = bot.carClass === 'f1' || bot.carClass === 'fe' ? 0.04 : 0.01;
       return {
         cfg: bot,
         s: wrappedS,
@@ -410,6 +410,8 @@ export const AIRacerManager: React.FC<AIRacerManagerProps> = React.memo(({
       const classCornerScale =
         bot.cfg.carClass === 'f1'
           ? 1.15
+          : bot.cfg.carClass === 'fe'
+          ? 1.06
           : bot.cfg.carClass === 'gt'
           ? 0.94
           : bot.cfg.carClass === 'rally'
@@ -645,7 +647,7 @@ export const AIRacerManager: React.FC<AIRacerManagerProps> = React.memo(({
       const spNext = arcSampler.sampleAt(bot.s + 6);
       const roadW = sp.width || 18;
       const surfaceY = sp.y + Math.abs(sp.bankSin) * (roadW * 0.5) - bot.laneOffset * sp.bankSin;
-      const rideLift = bot.cfg.carClass === 'f1' ? 0.04 : 0.01;
+      const rideLift = bot.cfg.carClass === 'f1' || bot.cfg.carClass === 'fe' ? 0.04 : 0.01;
 
       const wx = sp.x + sp.lx * bot.laneOffset;
       const wz = sp.z + sp.lz * bot.laneOffset;
