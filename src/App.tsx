@@ -95,7 +95,12 @@ export default function App() {
         if (res.ok) {
           const list = await res.json();
           if (Array.isArray(list)) {
-            list.forEach((c: any) => keys.add(String(c.name || c.id).toLowerCase()));
+            list.forEach((c: any) => {
+              if (Array.isArray(c?.controlPoints) && c.controlPoints.length >= 3) {
+                const key = String(c.name || c.id || '').trim().toLowerCase();
+                if (key) keys.add(key);
+              }
+            });
           }
         }
       } catch {
@@ -106,7 +111,12 @@ export default function App() {
         if (raw) {
           const list = JSON.parse(raw);
           if (Array.isArray(list)) {
-            list.forEach((c: any) => keys.add(String(c.name || c.id).toLowerCase()));
+            list.forEach((c: any) => {
+              if (Array.isArray(c?.controlPoints) && c.controlPoints.length >= 3) {
+                const key = String(c.name || c.id || '').trim().toLowerCase();
+                if (key) keys.add(key);
+              }
+            });
           }
         }
       } catch {

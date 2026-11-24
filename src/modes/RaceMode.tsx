@@ -281,6 +281,8 @@ export const RaceMode: React.FC<RaceModeProps> = ({
   const hasGamepad = Boolean(gamepadStatus.activePad);
 
   const [circuits, setCircuits] = useState<CircuitOption[]>([]);
+  const [localOnlyCircuits, setLocalOnlyCircuits] = useState<SavedCircuit[]>([]);
+  const [isSyncingCircuits, setIsSyncingCircuits] = useState<boolean>(false);
   const [driverProfile, setDriverProfile] = useState<DriverProfile>(loadInitialProfile);
   const [raceTunings, setRaceTunings] = useState<Record<CarClass, CarTuning>>(() =>
     loadInitialTunings(loadInitialProfile())
@@ -362,70 +364,146 @@ export const RaceMode: React.FC<RaceModeProps> = ({
   }, [raceTunings]);
 
   // Load saved circuits from server disk + localStorage fallback
-  useEffect(() => {
-    let cancelled = false;
-    async function loadCircuits() {
-      const mergedMap = new Map<string, SavedCircuit>();
-      try {
-        const res = await fetch('/api/circuits');
-        if (res.ok) {
-          const diskList: SavedCircuit[] = await res.json();
-          if (Array.isArray(diskList)) {
-            diskList.forEach((c) => {
-              if (c.controlPoints && c.controlPoints.length >= 3) {
-                mergedMap.set((c.name || c.id).toLowerCase(), c);
-              }
-            });
-          }
+  const loadCircuits = useCallback(async (isCancelled?: () => boolean) => {
+    const mergedMap = new Map<string, SavedCircuit>();
+    let apiOk = false;
+
+    try {
+      const res = await fetch('/api/circuits');
+      if (res.ok) {
+        const diskList: SavedCircuit[] = await res.json();
+        if (Array.isArray(diskList)) {
+          apiOk = true;
+          diskList.forEach((c) => {
+            if (c.controlPoints && c.controlPoints.length >= 3) {
+              const key = (c.name || c.id || '').trim().toLowerCase();
+              if (key) mergedMap.set(key, c);
+            }
+          });
         }
-      } catch {
-        // Fallback below
       }
-
-      try {
-        const rawLocal = localStorage.getItem(SAVED_CIRCUITS_STORAGE_KEY);
-        if (rawLocal) {
-          const localList: SavedCircuit[] = JSON.parse(rawLocal);
-          if (Array.isArray(localList)) {
-            localList.forEach((c) => {
-              const key = (c.name || c.id).toLowerCase();
-              if (!mergedMap.has(key) && c.controlPoints && c.controlPoints.length >= 3) {
-                mergedMap.set(key, c);
-              }
-            });
-          }
-        }
-      } catch {
-        // Ignore invalid localStorage
-      }
-
-      if (mergedMap.size === 0) {
-        const fallbackPts = createDefaultCircuit();
-        const defaultCirc: SavedCircuit = {
-          id: 'circuito_padrao',
-          name: 'Circuito MiniRace GP',
-          controlPoints: fallbackPts,
-          isClosed: true,
-          savedAt: Date.now(),
-        };
-        mergedMap.set('padrao', defaultCirc);
-      }
-
-      const opts = Array.from(mergedMap.values())
-        .sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0))
-        .map(computeCircuitOption);
-
-      if (!cancelled) {
-        setCircuits(opts);
-        setCreateCircuitId((prev) => prev || opts[0]?.circuit.id || '');
-      }
+    } catch {
+      // Fallback below
     }
 
-    loadCircuits();
+    const localOnly: SavedCircuit[] = [];
+    try {
+      const rawLocal = localStorage.getItem(SAVED_CIRCUITS_STORAGE_KEY);
+      if (rawLocal) {
+        const localList: SavedCircuit[] = JSON.parse(rawLocal);
+        if (Array.isArray(localList)) {
+          localList.forEach((c) => {
+            const key = (c.name || c.id || '').trim().toLowerCase();
+            if (key && !mergedMap.has(key) && c.controlPoints && c.controlPoints.length >= 3) {
+              mergedMap.set(key, c);
+              if (apiOk) {
+                localOnly.push(c);
+              }
+            }
+          });
+        }
+      }
+    } catch {
+      // Ignore invalid localStorage
+    }
+
+    if (mergedMap.size === 0) {
+      const fallbackPts = createDefaultCircuit();
+      const defaultCirc: SavedCircuit = {
+        id: 'circuito_padrao',
+        name: 'Circuito MiniRace GP',
+        controlPoints: fallbackPts,
+        isClosed: true,
+        savedAt: Date.now(),
+      };
+      mergedMap.set('padrao', defaultCirc);
+    }
+
+    const opts = Array.from(mergedMap.values())
+      .sort((a, b) => (b.savedAt || 0) - (a.savedAt || 0))
+      .map(computeCircuitOption);
+
+    if (!isCancelled?.()) {
+      setLocalOnlyCircuits(apiOk ? localOnly : []);
+      setCircuits(opts);
+      setCreateCircuitId((prev) => prev || opts[0]?.circuit.id || '');
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadCircuits(() => cancelled);
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadCircuits]);
+
+  const handleSyncLocalCircuitsToServer = useCallback(async () => {
+    if (isSyncingCircuits || localOnlyCircuits.length === 0) return;
+    setIsSyncingCircuits(true);
+    try {
+      const prepared: SavedCircuit[] = [];
+      for (const c of localOnlyCircuits) {
+        let finalMapUrl = c.mapImageUrl || null;
+        if (finalMapUrl && finalMapUrl.startsWith('data:image')) {
+          try {
+            const uploadRes = await fetch('/api/upload-map', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ dataUrl: finalMapUrl, fileName: c.name || 'map' }),
+            });
+            if (uploadRes.ok) {
+              const uploadData = await uploadRes.json();
+              if (uploadData?.url) finalMapUrl = String(uploadData.url);
+            }
+          } catch {
+            // Manter URL original se upload falhar
+          }
+        }
+        prepared.push({ ...c, mapImageUrl: finalMapUrl });
+      }
+
+      let ok = false;
+      let savedCount = 0;
+      const bulkRes = await fetch('/api/circuits/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ circuits: prepared }),
+      });
+      if (bulkRes.ok) {
+        const data = await bulkRes.json();
+        ok = true;
+        savedCount = Number.isFinite(Number(data?.savedCount)) ? Number(data.savedCount) : prepared.length;
+      } else if (bulkRes.status === 404) {
+        for (const item of prepared) {
+          try {
+            const r = await fetch('/api/circuits', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(item),
+            });
+            if (r.ok) savedCount++;
+          } catch {
+            // Continuar com os restantes
+          }
+        }
+        ok = savedCount > 0;
+      }
+
+      if (ok && savedCount > 0) {
+        await loadCircuits();
+        showToast(
+          `✓ ${savedCount} ${savedCount === 1 ? 'pista publicada' : 'pistas publicadas'} online para todos!`
+        );
+      } else {
+        showToast('⚠️ Falha ao publicar pistas para o servidor.');
+      }
+    } catch {
+      showToast('⚠️ Falha ao publicar pistas para o servidor.');
+    } finally {
+      setIsSyncingCircuits(false);
+    }
+  }, [isSyncingCircuits, localOnlyCircuits, loadCircuits, showToast]);
 
   // Auto-join invite code (?room=CODE)
   useEffect(() => {
@@ -3003,6 +3081,47 @@ export const RaceMode: React.FC<RaceModeProps> = ({
             <label style={{ fontSize: 11, fontWeight: 800, color: '#94a3b8', display: 'block', marginBottom: 5 }}>
               Selecionar Pista ({circuits.length} disponíveis)
             </label>
+            {localOnlyCircuits.length > 0 && (
+              <div
+                style={{
+                  marginBottom: 8,
+                  padding: '8px 10px',
+                  borderRadius: 10,
+                  background: 'rgba(245, 158, 11, 0.14)',
+                  border: '1px solid rgba(251, 191, 36, 0.45)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 10,
+                  flexWrap: 'wrap',
+                }}
+              >
+                <span style={{ fontSize: 11, fontWeight: 800, color: '#fde68a' }}>
+                  ⚠️ {localOnlyCircuits.length}{' '}
+                  {localOnlyCircuits.length === 1 ? 'pista só neste browser' : 'pistas só neste browser'} (invisíveis para amigos)
+                </span>
+                <button
+                  type="button"
+                  disabled={isSyncingCircuits}
+                  onClick={handleSyncLocalCircuitsToServer}
+                  style={{
+                    background: isSyncingCircuits
+                      ? 'rgba(245, 158, 11, 0.25)'
+                      : 'linear-gradient(135deg, #f59e0b, #d97706)',
+                    color: isSyncingCircuits ? '#fde68a' : '#090d16',
+                    border: '1px solid rgba(251, 191, 36, 0.65)',
+                    borderRadius: 8,
+                    padding: '5px 10px',
+                    fontSize: 11,
+                    fontWeight: 900,
+                    cursor: isSyncingCircuits ? 'wait' : 'pointer',
+                    flexShrink: 0,
+                  }}
+                >
+                  {isSyncingCircuits ? '⏳ A publicar...' : '☁️ Publicar Online'}
+                </button>
+              </div>
+            )}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 7, maxHeight: 200, overflowY: 'auto' }}>
               {circuits.map((opt) => {
                 const active = selectedCreateCircuit?.circuit.id === opt.circuit.id;

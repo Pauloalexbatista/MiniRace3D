@@ -33,10 +33,16 @@ export interface StudioSidebarProps {
   onLoadTrack?: (circuit: SavedCircuit) => void;
   onDeleteTrack?: (id: string) => void;
   onExportJson?: () => void;
+  onExportAllJson?: () => void;
   onImportJson?: (e: React.ChangeEvent<HTMLInputElement>) => void;
   savedCircuitsCount?: number;
   onOpenSavedCircuits?: () => void;
   saveSuccessMsg?: string | null;
+  serverCircuitKeys?: Set<string>;
+  apiAvailable?: boolean;
+  localOnlyCount?: number;
+  isSyncing?: boolean;
+  onSyncAllToServer?: () => void;
   controlPoints: SplineNode[];
   selectedPointIndex: number | null;
   onSelectPointIndex: (idx: number) => void;
@@ -446,81 +452,131 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
                     </button>
                   </div>
 
+                  {props.apiAvailable && (props.localOnlyCount || 0) > 0 && props.onSyncAllToServer && (
+                    <button
+                      onClick={props.onSyncAllToServer}
+                      disabled={props.isSyncing}
+                      style={{
+                        width: '100%',
+                        marginBottom: 8,
+                        background: props.isSyncing
+                          ? 'rgba(245, 158, 11, 0.2)'
+                          : 'linear-gradient(135deg, #f59e0b, #d97706)',
+                        color: props.isSyncing ? '#fde68a' : '#090d16',
+                        border: '1px solid rgba(251, 191, 36, 0.55)',
+                        borderRadius: 6,
+                        padding: '7px 10px',
+                        fontSize: 10.5,
+                        fontWeight: 900,
+                        cursor: props.isSyncing ? 'wait' : 'pointer',
+                        textAlign: 'center'
+                      }}
+                    >
+                      {props.isSyncing
+                        ? 'A sincronizar...'
+                        : `☁️ Enviar ${props.localOnlyCount} ${props.localOnlyCount === 1 ? 'pista local' : 'pistas locais'} para Online`}
+                    </button>
+                  )}
+
                   {(!props.savedTracks || props.savedTracks.length === 0) ? (
                     <div style={{ fontSize: 11, color: '#94a3b8', textAlign: 'center', padding: '12px 0' }}>
                       Ainda não tens circuitos gravados.<br />Dá um nome acima e clica em <b>[Gravar]</b>!
                     </div>
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 180, overflowY: 'auto' }}>
-                      {props.savedTracks.map((c) => (
-                        <div
-                          key={c.id}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            padding: '6px 8px',
-                            background: 'rgba(255,255,255,0.04)',
-                            borderRadius: 6,
-                            border: '1px solid rgba(255,255,255,0.06)'
-                          }}
-                        >
-                          <div>
-                            <div style={{ fontSize: 11, fontWeight: 800, color: '#fff' }}>{c.name}</div>
-                            <div style={{ fontSize: 9, color: '#94a3b8' }}>
-                              {c.controlPoints?.length || 0} nós {c.customPitNodes && c.customPitNodes.length > 0 ? '• Box' : ''} • <span style={{ color: '#38bdf8' }}>💾 {c.fileName || (c.name + '.json')}</span>
+                      {props.savedTracks.map((c) => {
+                        const isOnlineSynced = Boolean(
+                          props.apiAvailable &&
+                            props.serverCircuitKeys?.has((c.name || c.id || '').trim().toLowerCase())
+                        );
+                        return (
+                          <div
+                            key={c.id}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              padding: '6px 8px',
+                              background: 'rgba(255,255,255,0.04)',
+                              borderRadius: 6,
+                              border: '1px solid rgba(255,255,255,0.06)'
+                            }}
+                          >
+                            <div>
+                              <div style={{ fontSize: 11, fontWeight: 800, color: '#fff' }}>{c.name}</div>
+                              <div style={{ fontSize: 9, color: '#94a3b8', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 4 }}>
+                                <span>
+                                  {c.controlPoints?.length || 0} nós {c.customPitNodes && c.customPitNodes.length > 0 ? '• Box' : ''} •{' '}
+                                  <span style={{ color: '#38bdf8' }}>💾 {c.fileName || (c.name + '.json')}</span>
+                                </span>
+                                {props.apiAvailable && (
+                                  <span
+                                    style={{
+                                      padding: '1px 5px',
+                                      borderRadius: 4,
+                                      fontSize: 8.5,
+                                      fontWeight: 800,
+                                      background: isOnlineSynced ? 'rgba(16, 185, 129, 0.18)' : 'rgba(245, 158, 11, 0.2)',
+                                      color: isOnlineSynced ? '#34d399' : '#fbbf24',
+                                      border: isOnlineSynced ? '1px solid rgba(52, 211, 153, 0.35)' : '1px solid rgba(251, 191, 36, 0.4)'
+                                    }}
+                                  >
+                                    {isOnlineSynced ? '🌐 Online' : '⚠️ Só local'}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: 4 }}>
+                              <button
+                                onClick={() => {
+                                  props.onLoadTrack(c);
+                                  setShowSavedTracks(false);
+                                }}
+                                style={{
+                                  background: '#0284c7',
+                                  color: '#fff',
+                                  border: 'none',
+                                  borderRadius: 4,
+                                  padding: '4px 8px',
+                                  fontSize: 10,
+                                  fontWeight: 800,
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                Carregar
+                              </button>
+                              <button
+                                onClick={() => props.onDeleteTrack(c.id)}
+                                style={{
+                                  background: 'rgba(239, 68, 68, 0.2)',
+                                  color: '#fca5a5',
+                                  border: 'none',
+                                  borderRadius: 4,
+                                  padding: '4px 6px',
+                                  fontSize: 10,
+                                  cursor: 'pointer'
+                                }}
+                                title="Eliminar circuito"
+                              >
+                                <Trash2 size={11} />
+                              </button>
                             </div>
                           </div>
-                          <div style={{ display: 'flex', gap: 4 }}>
-                            <button
-                              onClick={() => {
-                                props.onLoadTrack(c);
-                                setShowSavedTracks(false);
-                              }}
-                              style={{
-                                background: '#0284c7',
-                                color: '#fff',
-                                border: 'none',
-                                borderRadius: 4,
-                                padding: '4px 8px',
-                                fontSize: 10,
-                                fontWeight: 800,
-                                cursor: 'pointer'
-                              }}
-                            >
-                              Carregar
-                            </button>
-                            <button
-                              onClick={() => props.onDeleteTrack(c.id)}
-                              style={{
-                                background: 'rgba(239, 68, 68, 0.2)',
-                                color: '#fca5a5',
-                                border: 'none',
-                                borderRadius: 4,
-                                padding: '4px 6px',
-                                fontSize: 10,
-                                cursor: 'pointer'
-                              }}
-                              title="Eliminar circuito"
-                            >
-                              <Trash2 size={11} />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
 
-                  <div style={{ display: 'flex', gap: 6, marginTop: 8, borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 8 }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 8, borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 8 }}>
                     <button
                       onClick={props.onExportJson}
                       style={{
-                        flex: 1,
+                        flex: '1 1 auto',
                         background: 'rgba(255,255,255,0.06)',
                         color: '#cbd5e1',
                         border: '1px solid rgba(255,255,255,0.15)',
                         borderRadius: 4,
-                        padding: '5px',
+                        padding: '5px 6px',
                         fontSize: 10,
                         fontWeight: 700,
                         cursor: 'pointer',
@@ -533,14 +589,38 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
                       <Download size={11} />
                       <span>Exportar JSON</span>
                     </button>
+                    {props.onExportAllJson && (
+                      <button
+                        onClick={props.onExportAllJson}
+                        title="Descarregar backup JSON com todas as pistas"
+                        style={{
+                          flex: '1 1 auto',
+                          background: 'rgba(56, 189, 248, 0.12)',
+                          color: '#7dd3fc',
+                          border: '1px solid rgba(56, 189, 248, 0.3)',
+                          borderRadius: 4,
+                          padding: '5px 6px',
+                          fontSize: 10,
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 4
+                        }}
+                      >
+                        <Download size={11} />
+                        <span>Backup Todas</span>
+                      </button>
+                    )}
                     <label
                       style={{
-                        flex: 1,
+                        flex: '1 1 auto',
                         background: 'rgba(255,255,255,0.06)',
                         color: '#cbd5e1',
                         border: '1px solid rgba(255,255,255,0.15)',
                         borderRadius: 4,
-                        padding: '5px',
+                        padding: '5px 6px',
                         fontSize: 10,
                         fontWeight: 700,
                         cursor: 'pointer',
@@ -552,7 +632,7 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = (props) => {
                     >
                       <Upload size={11} />
                       <span>Importar JSON</span>
-                      <input type="file" accept=".json" onChange={props.onImportJson} style={{ display: 'none' }} />
+                      <input type="file" accept=".json" multiple onChange={props.onImportJson} style={{ display: 'none' }} />
                     </label>
                   </div>
                 </div>

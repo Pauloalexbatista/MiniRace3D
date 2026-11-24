@@ -1,5 +1,5 @@
 import { ErrorBoundary } from '../components/ErrorBoundary';
-import { useCircuitStorage } from '../hooks/useCircuitStorage';
+import { normalizeCircuitKey, useCircuitStorage } from '../hooks/useCircuitStorage';
 import { ReferenceMapOverlay } from '../components/ReferenceMapOverlay';
 import React, { useState, useMemo, useEffect, useRef, useCallback, useSyncExternalStore } from 'react';
 import { Canvas } from '@react-three/fiber';
@@ -1323,10 +1323,16 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
   const {
     savedCircuits,
     saveSuccessMsg,
+    serverCircuitKeys,
+    apiAvailable,
+    localOnlyCount,
+    isSyncing,
     saveCurrentTrack: handleSaveCurrentTrack,
     deleteSavedTrack: handleDeleteSavedTrack,
     exportJson: handleExportJson,
-    importJson: handleImportJson
+    exportAllJson: handleExportAllJson,
+    importJson: handleImportJson,
+    syncAllToServer: handleSyncAllToServer
   } = useCircuitStorage({
     trackName,
     controlPoints,
@@ -2333,6 +2339,69 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
               </button>
             </div>
 
+            <div style={{
+              padding: '10px 20px',
+              borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+              background: 'rgba(2, 6, 23, 0.45)',
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              gap: 8
+            }}>
+              {apiAvailable && localOnlyCount > 0 && (
+                <button
+                  onClick={() => handleSyncAllToServer(false)}
+                  disabled={isSyncing}
+                  style={{
+                    background: isSyncing
+                      ? 'rgba(245, 158, 11, 0.2)'
+                      : 'linear-gradient(135deg, #f59e0b, #d97706)',
+                    color: isSyncing ? '#fde68a' : '#090d16',
+                    border: '1px solid rgba(251, 191, 36, 0.55)',
+                    borderRadius: 7,
+                    padding: '6px 12px',
+                    fontSize: 11.5,
+                    fontWeight: 900,
+                    cursor: isSyncing ? 'wait' : 'pointer'
+                  }}
+                >
+                  {isSyncing
+                    ? 'A sincronizar...'
+                    : `☁️ Enviar ${localOnlyCount} ${localOnlyCount === 1 ? 'local' : 'locais'} para Online`}
+                </button>
+              )}
+              <button
+                onClick={handleExportAllJson}
+                style={{
+                  background: 'rgba(56, 189, 248, 0.14)',
+                  color: '#7dd3fc',
+                  border: '1px solid rgba(56, 189, 248, 0.35)',
+                  borderRadius: 7,
+                  padding: '6px 12px',
+                  fontSize: 11.5,
+                  fontWeight: 800,
+                  cursor: 'pointer'
+                }}
+              >
+                📦 Backup Todas (JSON)
+              </button>
+              <label
+                style={{
+                  background: 'rgba(255, 255, 255, 0.08)',
+                  color: '#e2e8f0',
+                  border: '1px solid rgba(255, 255, 255, 0.16)',
+                  borderRadius: 7,
+                  padding: '6px 12px',
+                  fontSize: 11.5,
+                  fontWeight: 800,
+                  cursor: 'pointer'
+                }}
+              >
+                ⬆️ Importar JSON
+                <input type="file" accept=".json" multiple onChange={handleImportJson} style={{ display: 'none' }} />
+              </label>
+            </div>
+
             <div style={{ padding: 20, overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 10 }}>
               {savedCircuits.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '30px 10px', color: '#94a3b8' }}>
@@ -2342,63 +2411,83 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
                   </p>
                 </div>
               ) : (
-                savedCircuits.map(c => (
-                  <div
-                    key={c.id}
-                    style={{
-                      background: 'rgba(30, 41, 59, 0.7)',
-                      border: '1px solid rgba(255, 255, 255, 0.08)',
-                      borderRadius: 10,
-                      padding: '12px 16px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between'
-                    }}
-                  >
-                    <div>
-                      <div style={{ fontWeight: 800, color: '#f8fafc', fontSize: 14 }}>
-                        {c.name}
+                savedCircuits.map(c => {
+                  const isOnlineSynced = Boolean(
+                    apiAvailable && serverCircuitKeys.has(normalizeCircuitKey(c))
+                  );
+                  return (
+                    <div
+                      key={c.id}
+                      style={{
+                        background: 'rgba(30, 41, 59, 0.7)',
+                        border: '1px solid rgba(255, 255, 255, 0.08)',
+                        borderRadius: 10,
+                        padding: '12px 16px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between'
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontWeight: 800, color: '#f8fafc', fontSize: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span>{c.name}</span>
+                          {apiAvailable && (
+                            <span
+                              style={{
+                                padding: '2px 7px',
+                                borderRadius: 999,
+                                fontSize: 10,
+                                fontWeight: 800,
+                                background: isOnlineSynced ? 'rgba(16, 185, 129, 0.18)' : 'rgba(245, 158, 11, 0.2)',
+                                color: isOnlineSynced ? '#34d399' : '#fbbf24',
+                                border: isOnlineSynced ? '1px solid rgba(52, 211, 153, 0.35)' : '1px solid rgba(251, 191, 36, 0.4)'
+                              }}
+                            >
+                              {isOnlineSynced ? '🌐 Online' : '⚠️ Só local'}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}>
+                          {c.controlPoints?.length || 0} nós • <span style={{ color: '#38bdf8' }}>💾 {c.fileName ? `circuits/${c.fileName}` : 'No Disco'}</span> • {new Date(c.savedAt).toLocaleDateString('pt-PT')}
+                        </div>
                       </div>
-                      <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}>
-                        {c.controlPoints?.length || 0} nós • <span style={{ color: '#38bdf8' }}>💾 {c.fileName ? `circuits/${c.fileName}` : 'No Disco'}</span> • {new Date(c.savedAt).toLocaleDateString('pt-PT')}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <button
+                          onClick={() => {
+                            handleLoadSavedTrack(c);
+                            setShowSavedModal(false);
+                          }}
+                          style={{
+                            background: '#0284c7',
+                            color: '#ffffff',
+                            border: 'none',
+                            borderRadius: 6,
+                            padding: '6px 14px',
+                            fontSize: 12,
+                            fontWeight: 700,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Carregar
+                        </button>
+                        <button
+                          onClick={() => handleDeleteSavedTrack(c.id)}
+                          title="Eliminar este circuito"
+                          style={{
+                            background: 'rgba(239, 68, 68, 0.15)',
+                            color: '#f87171',
+                            border: '1px solid rgba(239, 68, 68, 0.3)',
+                            borderRadius: 6,
+                            padding: '6px 10px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          <Trash2 size={14} />
+                        </button>
                       </div>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <button
-                        onClick={() => {
-                          handleLoadSavedTrack(c);
-                          setShowSavedModal(false);
-                        }}
-                        style={{
-                          background: '#0284c7',
-                          color: '#ffffff',
-                          border: 'none',
-                          borderRadius: 6,
-                          padding: '6px 14px',
-                          fontSize: 12,
-                          fontWeight: 700,
-                          cursor: 'pointer'
-                        }}
-                      >
-                        Carregar
-                      </button>
-                      <button
-                        onClick={() => handleDeleteSavedTrack(c.id)}
-                        title="Eliminar este circuito"
-                        style={{
-                          background: 'rgba(239, 68, 68, 0.15)',
-                          color: '#f87171',
-                          border: '1px solid rgba(239, 68, 68, 0.3)',
-                          borderRadius: 6,
-                          padding: '6px 10px',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>
@@ -2424,10 +2513,16 @@ export const TrackEditorMode: React.FC<TrackEditorModeProps> = ({ onBackToHome, 
         onLoadTrack={handleLoadSavedTrack}
         onDeleteTrack={handleDeleteSavedTrack}
         onExportJson={handleExportJson}
+        onExportAllJson={handleExportAllJson}
         onImportJson={handleImportJson}
         savedCircuitsCount={savedCircuits.length}
         onOpenSavedCircuits={() => setShowSavedModal(true)}
         saveSuccessMsg={saveSuccessMsg || localToastMsg}
+        serverCircuitKeys={serverCircuitKeys}
+        apiAvailable={apiAvailable}
+        localOnlyCount={localOnlyCount}
+        isSyncing={isSyncing}
+        onSyncAllToServer={() => handleSyncAllToServer(false)}
         controlPoints={controlPoints}
         selectedPointIndex={selectedPointIndex}
         onSelectPointIndex={(idx) => {

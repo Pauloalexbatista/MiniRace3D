@@ -77,7 +77,7 @@ export function loadCircuitFromDisk(circuitsDir, circuitId) {
   if (!circuitsDir || !circuitId || !fs.existsSync(circuitsDir)) return null;
   const targetNorm = normalizeLookupKey(circuitId);
   try {
-    const files = fs.readdirSync(circuitsDir).filter((f) => f.endsWith('.json'));
+    const files = fs.readdirSync(circuitsDir).filter((f) => f.endsWith('.json') && !f.startsWith('.'));
     for (const file of files) {
       const fullPath = path.join(circuitsDir, file);
       try {
